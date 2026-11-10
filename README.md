@@ -77,6 +77,7 @@ Only `MONGODB_URI` is required right now. Each provider checks for its own API k
 | `EMBED_PROVIDER` | `openai` | `openai` or `voyage` |
 | `EMBED_MODEL` | `text-embedding-3-small` | |
 | `EMBED_DIMENSIONS` | `1536` | |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI embeddings. Can point at Azure (see below) |
 | `OPENAI_API_KEY` | | |
 | `VOYAGE_API_KEY` | | |
 | `RERANK_PROVIDER` | `cohere` | `cohere`, `voyage`, `jina` or `none` |
@@ -94,6 +95,33 @@ Only `MONGODB_URI` is required right now. Each provider checks for its own API k
 | `PORT` | `3000` | Local dev only |
 
 Empty values (for example `OPENAI_API_KEY=`) count as not set.
+
+### Using Azure OpenAI
+
+Azure OpenAI has an OpenAI-compatible v1 API at `https://<resource>.openai.azure.com/openai/v1`. You don't need an `api-version` for it. Point both the embeddings and the LLM at it, and use your **deployment names** as the model names:
+
+```bash
+EMBED_PROVIDER=openai
+OPENAI_BASE_URL=https://<resource>.openai.azure.com/openai/v1
+OPENAI_API_KEY=<azure key>
+EMBED_MODEL=text-embedding-3-small     # embedding deployment name
+EMBED_DIMENSIONS=1536
+
+LLM_BASE_URL=https://<resource>.openai.azure.com/openai/v1
+LLM_API_KEY=<azure key>
+LLM_MODEL=gpt-5-chat                   # chat deployment name
+```
+
+Check that both deployments answer:
+
+```bash
+curl -s "$OPENAI_BASE_URL/embeddings" -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" -d '{"model":"text-embedding-3-small","input":"hello"}' | head -c 300
+curl -s "$LLM_BASE_URL/chat/completions" -H "Authorization: Bearer $LLM_API_KEY" \
+  -H "Content-Type: application/json" -d '{"model":"gpt-5-chat","messages":[{"role":"user","content":"Say hi"}]}'
+```
+
+Docs: https://learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle
 
 ## Deploy to Vercel
 

@@ -25,6 +25,9 @@ const EnvSchema = z
     EMBED_PROVIDER: z.preprocess(blankToUndefined, z.enum(['openai', 'voyage']).default('openai')),
     EMBED_MODEL: str('text-embedding-3-small'),
     EMBED_DIMENSIONS: int(1536),
+    // OpenAI or any OpenAI-compatible endpoint, e.g. Azure OpenAI v1:
+    // https://<resource>.openai.azure.com/openai/v1 (model = deployment name)
+    OPENAI_BASE_URL: z.preprocess(blankToUndefined, z.url().default('https://api.openai.com/v1')),
     OPENAI_API_KEY: optionalString,
     VOYAGE_API_KEY: optionalString,
 
