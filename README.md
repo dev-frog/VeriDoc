@@ -4,7 +4,7 @@
 
 VeriDoc is an open-source RAG engine backend. You upload documents (PDF, Markdown, DOCX, TXT). VeriDoc chunks them and stores the embeddings and text in MongoDB Atlas. It answers questions with hybrid search: BM25 full-text and vector search, fused with `$rankFusion`, then reranked. The LLM must cite every claim as `[Source N]`, and each citation is checked against the chunks that were actually retrieved.
 
-**Status:** Step 1 is done (project setup, config, MongoDB client, `/health`). Ingestion, search and generation come in later steps.
+**Status:** Steps 1–2 are done (project setup, config, MongoDB client, `/health`, data model and indexes). Ingestion, search and generation come in later steps.
 
 ## Tech stack
 
@@ -58,6 +58,7 @@ If MongoDB can't be reached, the response is `503 {"status":"degraded","version"
 | `pnpm start` | Starts the server once. Does **not** load `.env`; the variables must already be set in the environment |
 | `pnpm test` | Runs the test suite once |
 | `pnpm test:watch` | Runs vitest in watch mode |
+| `pnpm db:setup` | Creates collections and indexes (skips any that already exist), then waits until the search indexes are ready. Add `--update` to replace existing search index definitions |
 
 If the config is invalid, the server stops at startup and lists every problem, for example:
 
@@ -188,6 +189,29 @@ Env vars only apply to deployments made after you set them. If you change one, r
 - Request bodies are limited to 4.5 MB, so files are uploaded to Vercel Blob first and the API receives the URL.
 - No ML models run locally; embeddings, reranking and the LLM are all external APIs.
 - No in-memory state is kept between requests.
+
+## Data model
+
+Typedefs are in `src/core/types.js`.
+
+**`documents`**: `{ _id, fileName, mimeType, sourceUrl, pageCount, status, error, chunkCount, createdAt, updatedAt }`, where `status` is `pending`, `processing`, `ready` or `failed`.
+
+**`chunks`**: `{ _id, docId, chunkIndex, text, embedding, page, heading, tokenCount, createdAt }`
+
+| Collection | Index | Type |
+|---|---|---|
+| `chunks` | `docId_chunkIndex` (`{ docId: 1, chunkIndex: 1 }`, unique) | Regular |
+| `chunks` | `chunks_vector`: `embedding` (cosine, `EMBED_DIMENSIONS`), filter field `docId` | Atlas Vector Search |
+| `chunks` | `chunks_text`: `text`, `heading` (lucene.standard), plus `docId` for filtering | Atlas Search (BM25) |
+| `documents` | `createdAt_desc` | Regular |
+
+Run this once per database, and again whenever `EMBED_DIMENSIONS` changes:
+
+```bash
+pnpm db:setup
+```
+
+Search indexes need an Atlas cluster; the free M0 tier allows up to 3 of them. If you change `EMBED_DIMENSIONS`, run `pnpm db:setup --update` and re-embed every document, because existing vectors won't match the new size.
 
 ## API
 
