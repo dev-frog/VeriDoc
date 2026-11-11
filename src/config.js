@@ -53,6 +53,17 @@ const EnvSchema = z
     CHUNK_OVERLAP: z.preprocess(blankToUndefined, z.coerce.number().min(0).max(0.5).default(0.12)),
     TOP_K: int(30),
     TOP_N: int(5),
+
+    // Ingestion
+    /** Comma-separated hosts allowed as document sources: "*", "*.example.com" or exact hosts. */
+    SOURCE_URL_HOSTS: str('*.public.blob.vercel-storage.com').transform((s) =>
+      s.split(',').map((h) => h.trim()).filter(Boolean),
+    ),
+    MAX_FILE_MB: int(50),
+    /** Chunks embedded per POST /documents/:id/process call. */
+    INGEST_BATCH_SIZE: int(256),
+    /** Texts per embedding API request. */
+    EMBED_BATCH_SIZE: int(64),
   })
   .refine((e) => e.TOP_N <= e.TOP_K, { path: ['TOP_N'], message: 'must be <= TOP_K' });
 

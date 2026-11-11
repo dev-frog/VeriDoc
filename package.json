@@ -14,13 +14,17 @@
     "start": "node src/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:setup": "node --env-file=.env scripts/setup-indexes.js"
+    "db:setup": "node --env-file=.env scripts/setup-indexes.js",
+    "ingest": "node --env-file=.env scripts/ingest-cli.js"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.6",
     "@hono/zod-validator": "^0.9.1",
     "hono": "^4.13.17",
+    "js-tiktoken": "^1.0.21",
+    "mammoth": "^1.13.0",
     "mongodb": "^7.8.0",
+    "unpdf": "^2.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

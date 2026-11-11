@@ -18,7 +18,9 @@
  * @property {number | null} pageCount  null for formats without pages (md, txt)
  * @property {DocumentStatus} status
  * @property {string | null} error  set when status is "failed"
- * @property {number} chunkCount
+ * @property {number} chunkCount      total chunks (0 until parsed)
+ * @property {number} processedCount  chunks that have an embedding
+ * @property {Date | null} parsedAt   set once chunks are stored
  * @property {Date} createdAt
  * @property {Date} updatedAt
  */
@@ -30,7 +32,7 @@
  * @property {import('mongodb').ObjectId} docId  -> Document._id
  * @property {number} chunkIndex    0-based position within the document
  * @property {string} text
- * @property {number[]} embedding   length === EMBED_DIMENSIONS
+ * @property {number[]} [embedding] length === EMBED_DIMENSIONS; absent until embedded
  * @property {number | null} page   1-based page number, null if unknown
  * @property {string | null} heading  nearest section heading, if any
  * @property {number} tokenCount
