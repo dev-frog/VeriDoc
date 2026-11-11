@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { requestId } from 'hono/request-id';
+import { requestLogger } from './logger.js';
 import pkg from '../../package.json' with { type: 'json' };
 import { CoreError, ErrorCodes } from '../core/index.js';
 import { apiKeyAuth } from './auth.js';
@@ -10,6 +12,7 @@ import { documentRoutes } from './routes/documents.js';
  * @property {() => Promise<boolean>} pingDb  resolves true if MongoDB answered
  * @property {import('../core/ingest/service.js').IngestService} ingest
  * @property {{ apiKey?: string, required?: boolean }} [auth]
+ * @property {Parameters<typeof requestLogger>[0] | false} [log]  request logging; false/omitted = off
  * @property {string} [version]
  */
 
@@ -30,8 +33,13 @@ const STATUS_BY_CODE = {
  * @param {AppDeps} deps
  * @returns {Hono}
  */
-export function createApp({ pingDb, ingest, auth = {}, version = pkg.version }) {
+export function createApp({ pingDb, ingest, auth = {}, log = false, version = pkg.version }) {
   const app = new Hono();
+
+  // Reuse a valid incoming X-Request-Id, else Vercel's id, else a UUID.
+  // The id is echoed back in the X-Request-Id response header.
+  app.use(requestId({ generator: (c) => c.req.header('x-vercel-id') ?? crypto.randomUUID() }));
+  if (log) app.use(requestLogger(log));
 
   app.get('/health', async (c) => {
     const dbOk = await pingDb();
@@ -51,16 +59,20 @@ export function createApp({ pingDb, ingest, auth = {}, version = pkg.version }) 
   );
 
   app.onError((err, c) => {
+    const rid = c.get('requestId');
     if (err instanceof CoreError) {
       const status = STATUS_BY_CODE[err.code] ?? 500;
-      if (status >= 500) console.error(err);
+      c.set('errorCode', err.code);
+      if (status >= 500) console.error(`[req=${rid}] ${err.code}: ${err.message}`, err.cause ?? '');
       return c.json({ error: { code: err.code, message: err.message, ...(err.retryable && { retryable: true }) } }, status);
     }
     if (err instanceof HTTPException) {
+      c.set('errorCode', 'http_error');
       return c.json({ error: { code: 'http_error', message: err.message } }, err.status);
     }
-    console.error(err);
-    return c.json({ error: { code: 'internal_error', message: 'Internal server error' } }, 500);
+    c.set('errorCode', 'internal_error');
+    console.error(`[req=${rid}] unhandled error`, err);
+    return c.json({ error: { code: 'internal_error', message: 'Internal server error', requestId: rid } }, 500);
   });
 
   return app;

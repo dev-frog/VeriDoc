@@ -20,4 +20,5 @@ export const app = createApp({
   pingDb,
   ingest,
   auth: { apiKey: config.VERIDOC_API_KEY, required: config.NODE_ENV === 'production' },
+  log: config.LOG_FORMAT === 'off' ? false : { format: config.LOG_FORMAT },
 });

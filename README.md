@@ -98,6 +98,7 @@ Only `MONGODB_URI` is required right now. Each provider checks for its own API k
 | `MAX_FILE_MB` | `50` | Largest file that will be downloaded |
 | `INGEST_BATCH_SIZE` | `256` | Chunks embedded per `POST /documents/:id/process` call |
 | `EMBED_BATCH_SIZE` | `64` | Texts per embedding API request |
+| `LOG_FORMAT` | `pretty` in dev, `json` in production | Request log format: `pretty`, `json` or `off` |
 | `PORT` | `3000` | Local dev only |
 
 Empty values (for example `OPENAI_API_KEY=`) count as not set.
@@ -242,6 +243,31 @@ Errors always use the shape `{ "error": { "code": "...", "message": "..." } }` w
 | `unsupported_type` | 415 | The file extension isn't `.pdf`, `.md`, `.markdown`, `.txt` or `.docx` |
 | `provider_error` / `fetch_failed` | 502 | The embedding API or file download failed. Call `/process` again |
 | `config_error` | 500 | A required provider key is missing |
+
+### Request logs
+
+Every request writes one log line. Responses with status ≥ 500 go to stderr, everything else to stdout.
+
+```
+16:01:37 GET /health 200 921ms  req=8a08e008-…
+16:01:37 GET /documents 401 0ms  req=a2a01b6f-…
+16:02:10 POST /documents/66f…/process 502 3120ms provider_error  req=1796be18-…
+```
+
+With `LOG_FORMAT=json` (the default on Vercel), each line is a JSON object you can filter in **Vercel → Project → Logs**:
+
+```json
+{"level":"error","time":"2026-11-11T16:02:10.512Z","requestId":"fra1::abc","method":"POST","path":"/documents/66f…/process","status":502,"durationMs":3120,"error":"provider_error"}
+```
+
+**How the request ID is chosen:**
+- **Your own ID:** if the request sends a valid `X-Request-Id` header, that value is used.
+- **On Vercel:** otherwise the `x-vercel-id` header is used.
+- **Otherwise:** a new random UUID.
+
+The ID is returned in the `X-Request-Id` response header. For 5xx errors, the error details are logged with `[req=<id>]`, so you can find the full error from the ID a client reports.
+
+Headers and request bodies are never logged, so API keys and document contents stay out of the logs.
 
 ### How ingestion works
 

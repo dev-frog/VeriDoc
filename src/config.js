@@ -45,6 +45,8 @@ const EnvSchema = z
     LLM_MODEL: str('gpt-4o-mini'),
 
     // App
+    /** Request logs: pretty (readable), json (one JSON object per line) or off. Default depends on NODE_ENV. */
+    LOG_FORMAT: z.preprocess(blankToUndefined, z.enum(['pretty', 'json', 'off']).optional()),
     VERIDOC_API_KEY: optionalString,
     BLOB_READ_WRITE_TOKEN: optionalString,
 
@@ -65,7 +67,8 @@ const EnvSchema = z
     /** Texts per embedding API request. */
     EMBED_BATCH_SIZE: int(64),
   })
-  .refine((e) => e.TOP_N <= e.TOP_K, { path: ['TOP_N'], message: 'must be <= TOP_K' });
+  .refine((e) => e.TOP_N <= e.TOP_K, { path: ['TOP_N'], message: 'must be <= TOP_K' })
+  .transform((e) => ({ ...e, LOG_FORMAT: e.LOG_FORMAT ?? (e.NODE_ENV === 'production' ? 'json' : 'pretty') }));
 
 /**
  * @typedef {z.infer<typeof EnvSchema>} Config
