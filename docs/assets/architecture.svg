@@ -67,8 +67,8 @@
   <rect x="705" y="340" width="225" height="120" rx="12" fill="#13232a" stroke="#1f3a40"/>
   <text x="817" y="368" text-anchor="middle" fill="#e6f1ef" font-size="15" font-weight="600">AI providers</text>
   <g font-size="12" fill="#8aa3a0">
-    <text x="723" y="394">Embeddings: OpenAI · Voyage</text>
-    <text x="723" y="414">Azure OpenAI supported</text>
+    <text x="723" y="394">Embeddings: any OpenAI-compatible</text>
+    <text x="723" y="414">OpenRouter · OpenAI · Azure · Voyage</text>
     <text x="723" y="434">Rerank: Cohere · Voyage · Jina</text>
     <text x="723" y="452">LLM: any OpenAI-compatible</text>
   </g>

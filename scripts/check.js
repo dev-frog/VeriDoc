@@ -6,7 +6,7 @@
  *
  * Each live check makes one tiny request (a few tokens). Secrets are never printed.
  */
-import { loadConfig, ConfigError } from '../src/config.js';
+import { loadConfig, ConfigError, DEFAULT_RERANK_MODELS } from '../src/config.js';
 import { diagnoseConfig } from '../src/diagnostics.js';
 import { getDb, closeClient } from '../src/db/client.js';
 import { COLLECTIONS } from '../src/db/collections.js';
@@ -64,9 +64,9 @@ async function post(url, headers, body) {
 
 const httpHint = (what) => (err) =>
   ({
-    401: `Invalid key for ${what}. Copy a current key from the provider dashboard (Azure: resource → Keys and Endpoint)`,
+    401: `Invalid key for ${what}. Copy a current key from the provider dashboard`,
     403: `Key has no access to ${what}`,
-    404: `Wrong URL or model/deployment name for ${what}. On Azure the model must be your *deployment* name and the base URL must end in /openai/v1`,
+    404: `Wrong base URL or model name for ${what} (Azure: use the deployment name and a base URL ending in /openai/v1)`,
     429: 'Rate limited or out of quota',
   })[err.status];
 
@@ -136,14 +136,13 @@ async function main() {
       async () => {
         const query = 'What is VeriDoc?';
         const documents = ['VeriDoc is a RAG engine.', 'Bananas are yellow.'];
-        // Model names are the providers' current defaults; check their docs if these 404.
-        const req = {
-          cohere: ['https://api.cohere.com/v2/rerank', config.COHERE_API_KEY, 'rerank-v3.5'],
-          voyage: ['https://api.voyageai.com/v1/rerank', config.VOYAGE_API_KEY, 'rerank-2.5'],
-          jina: ['https://api.jina.ai/v1/rerank', config.JINA_API_KEY, 'jina-reranker-v2-base-multilingual'],
+        const url = {
+          cohere: 'https://api.cohere.com/v2/rerank',
+          voyage: 'https://api.voyageai.com/v1/rerank',
+          jina: 'https://api.jina.ai/v1/rerank',
         }[config.RERANK_PROVIDER];
-        const [url, key, model] = req;
-        const json = await post(url, { authorization: `Bearer ${key}` }, { model, query, documents, top_n: 2 });
+        const model = config.RERANK_MODEL ?? DEFAULT_RERANK_MODELS[config.RERANK_PROVIDER];
+        const json = await post(url, { authorization: `Bearer ${config.RERANK_API_KEY}` }, { model, query, documents, top_n: 2 });
         const results = json.results ?? json.data ?? [];
         const top = results[0]?.index;
         if (top !== 0) throw new Error(`unexpected ranking: ${JSON.stringify(results).slice(0, 120)}`);

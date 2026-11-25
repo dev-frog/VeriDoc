@@ -4,8 +4,8 @@ import { loadConfig } from '../src/config.js';
 
 const good = {
   MONGODB_URI: 'mongodb+srv://u:p@c.example.net/',
-  OPENAI_API_KEY: 'sk-abc',
-  OPENAI_BASE_URL: 'https://res.openai.azure.com/openai/v1',
+  EMBED_API_KEY: 'sk-abc',
+  EMBED_BASE_URL: 'https://res.openai.azure.com/openai/v1',
   LLM_BASE_URL: 'https://res.openai.azure.com/openai/v1',
   LLM_API_KEY: 'azure-key',
   RERANK_PROVIDER: 'none',
@@ -27,26 +27,26 @@ describe('diagnoseConfig', () => {
   });
 
   it('flags Azure base URLs without /openai/v1 and suggests the fix', () => {
-    const f = diagnose({ OPENAI_BASE_URL: 'https://res.openai.azure.com/' }).find((x) => x.level === 'error');
-    expect(f.message).toMatch(/OPENAI_BASE_URL .* without the \/openai\/v1/);
-    expect(f.fix).toBe('OPENAI_BASE_URL=https://res.openai.azure.com/openai/v1');
+    const f = diagnose({ EMBED_BASE_URL: 'https://res.openai.azure.com/' }).find((x) => x.level === 'error');
+    expect(f.message).toMatch(/EMBED_BASE_URL .* without the \/openai\/v1/);
+    expect(f.fix).toBe('EMBED_BASE_URL=https://res.openai.azure.com/openai/v1');
     expect(errors({ LLM_BASE_URL: 'https://res.openai.azure.com' })[0]).toMatch(/LLM_BASE_URL/);
   });
 
   it('does not flag non-Azure base URLs', () => {
-    expect(errors({ OPENAI_BASE_URL: 'https://api.openai.com/v1', LLM_BASE_URL: 'https://api.groq.com/openai/v1' })).toEqual([]);
+    expect(errors({ EMBED_BASE_URL: 'https://openrouter.ai/api/v1', LLM_BASE_URL: 'https://api.groq.com/openai/v1' })).toEqual([]);
   });
 
   it('flags missing provider keys', () => {
-    expect(errors({ OPENAI_API_KEY: '' })[0]).toMatch(/OPENAI_API_KEY is empty/);
-    expect(errors({ RERANK_PROVIDER: 'cohere' })[0]).toMatch(/COHERE_API_KEY is empty/);
-    expect(errors({ RERANK_PROVIDER: 'jina' })[0]).toMatch(/JINA_API_KEY is empty/);
+    expect(errors({ EMBED_API_KEY: '' })[0]).toMatch(/EMBED_API_KEY is empty/);
+    expect(errors({ RERANK_PROVIDER: 'cohere' })[0]).toMatch(/RERANK_PROVIDER=cohere but RERANK_API_KEY is empty/);
+    expect(errors({ RERANK_PROVIDER: 'jina', RERANK_API_KEY: 'jina_x' })).toEqual([]);
     expect(errors({ LLM_API_KEY: '' })[0]).toMatch(/LLM_API_KEY is empty/);
   });
 
   it('checks voyage settings', () => {
-    const e = errors({ EMBED_PROVIDER: 'voyage' });
-    expect(e).toContain('EMBED_PROVIDER=voyage but VOYAGE_API_KEY is empty');
+    const e = errors({ EMBED_PROVIDER: 'voyage', EMBED_API_KEY: '' });
+    expect(e).toContain('EMBED_API_KEY is empty');
     expect(e).toContain('EMBED_MODEL=text-embedding-3-small is an OpenAI model');
   });
 

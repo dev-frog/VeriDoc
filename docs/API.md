@@ -82,7 +82,7 @@ Errors that may succeed if you try again also carry `"retryable": true`. Unhandl
 | `parse_failed` | 422 | The file couldn't be parsed | Usually the document is marked `failed` instead — see `/process` |
 | `fetch_failed` | 502 | The file download failed with a network error, timeout, 408, 429 or 5xx (`retryable`) | Call `/process` again later |
 | `provider_error` | 502 | The embedding API failed (`retryable` when it's a rate limit or 5xx) | Call `/process` again later |
-| `config_error` | 500 | A provider key the request needs isn't configured (e.g. `OPENAI_API_KEY`) | Set the variable and redeploy |
+| `config_error` | 500 | A provider key the request needs isn't configured (e.g. `EMBED_API_KEY`) | Set the variable and redeploy |
 | `server_misconfigured` | 500 | `VERIDOC_API_KEY` missing in production | Set it and redeploy |
 | `internal_error` | 500 | Unexpected bug | Report it with the `requestId` |
 

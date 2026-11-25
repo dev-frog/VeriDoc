@@ -16,7 +16,7 @@ export function openAIAuthHeaders(baseUrl, apiKey) {
 }
 
 /**
- * Embeddings via any OpenAI-compatible /embeddings endpoint (OpenAI, Azure v1, ...).
+ * Embeddings via any OpenAI-compatible /embeddings endpoint (OpenAI, OpenRouter, Azure v1, ...).
  * @param {{ apiKey?: string, baseUrl: string, model: string, dimensions: number,
  *   batchSize?: number, http?: import('./http.js').RetryOptions }} opts
  * @returns {import('./index.js').Embedder}
@@ -29,13 +29,13 @@ export function createOpenAIEmbedder({ apiKey, baseUrl, model, dimensions, batch
   return {
     dimensions,
     async embed(texts) {
-      if (!apiKey) throw new CoreError(ErrorCodes.CONFIG_ERROR, 'OPENAI_API_KEY is not set');
+      if (!apiKey) throw new CoreError(ErrorCodes.CONFIG_ERROR, 'EMBED_API_KEY is not set');
       /** @type {number[][]} */
       const out = [];
       for (const batch of toBatches(texts, batchSize)) {
         const body = { model, input: batch, ...(sendDimensions && { dimensions }) };
-        const json = await postJson('OpenAI embeddings', url, body, openAIAuthHeaders(baseUrl, apiKey), http);
-        out.push(...readVectors(json, batch.length, dimensions, 'OpenAI'));
+        const json = await postJson('Embeddings API', url, body, openAIAuthHeaders(baseUrl, apiKey), http);
+        out.push(...readVectors(json, batch.length, dimensions, 'Embeddings API'));
       }
       return out;
     },

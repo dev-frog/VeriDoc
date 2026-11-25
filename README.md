@@ -25,7 +25,7 @@ Most RAG demos give you an answer and a vague "sources" list. VeriDoc is built a
 - 🧾 **Verifiable citations** — the LLM must cite every claim as `[Source N]`, and each citation is checked against the chunks that were actually retrieved.
 - 📄 **Real document structure** — chunks keep their page number (PDF) and heading path (`Guide > Install > Linux`) for Markdown and DOCX.
 - ☁️ **Serverless-native** — stateless Hono API on Vercel. Long jobs are split into small, repeatable batches that fit inside the function time limit.
-- 🔌 **Bring your own providers** — OpenAI, Azure OpenAI or Voyage for embeddings; Cohere, Voyage or Jina for reranking; any OpenAI-compatible LLM.
+- 🔌 **Bring your own providers** — any OpenAI-compatible API (OpenRouter, OpenAI, Azure OpenAI, …) or Voyage for embeddings; Cohere, Voyage or Jina for reranking; any OpenAI-compatible LLM. Works on free models via OpenRouter.
 - 🧱 **Clean core** — the engine in `src/core` has no HTTP code, so you can use it from the API, a CLI or your own app.
 
 > **Status:** 🚧 Early but working. Ingestion (upload → parse → chunk → embed) is done and tested. Hybrid search and cited answers are next. See the [roadmap](#-roadmap).
@@ -52,14 +52,14 @@ Files are uploaded to storage first (Vercel Blob or any allowed https host), and
 
 ## 🚀 Quick start
 
-**You need:** Node.js 20.10+, [pnpm](https://pnpm.io), and a MongoDB Atlas cluster (8.1+, the free M0 tier works). For embeddings you also need an OpenAI, Azure OpenAI or Voyage key.
+**You need:** Node.js 20.10+, [pnpm](https://pnpm.io), and a MongoDB Atlas cluster (8.1+, the free M0 tier works). For embeddings you also need a key for any OpenAI-compatible API — an [OpenRouter](https://openrouter.ai) key works, including its free models.
 
 ```bash
 git clone https://github.com/dev-frog/VeriDoc.git
 cd VeriDoc
 pnpm install
 
-cp .env.example .env     # set MONGODB_URI, OPENAI_API_KEY and VERIDOC_API_KEY
+cp .env.example .env     # set MONGODB_URI, EMBED_API_KEY, LLM_API_KEY and VERIDOC_API_KEY
 pnpm check               # checks config + every external service
 pnpm db:setup            # creates collections and search indexes
 pnpm dev                 # http://localhost:3000
@@ -124,24 +124,27 @@ All `/documents` routes need `Authorization: Bearer $VERIDOC_API_KEY`. Errors al
 
 ## ⚙️ Configuration
 
-Only `MONGODB_URI` is required to boot. Each provider checks for its own key the first time it's used, so `/health` works before you add any AI keys. Empty values (`OPENAI_API_KEY=`) count as not set.
+Only `MONGODB_URI` is required to boot. Each provider checks for its own key the first time it's used, so `/health` works before you add any AI keys. Empty values (`EMBED_API_KEY=`) count as not set.
+
+Variable names are provider-neutral: `EMBED_*` for embeddings, `RERANK_*` for reranking, `LLM_*` for the chat model. Point each one at whichever provider you like.
 
 <details>
 <summary><b>All environment variables</b></summary>
+
+Older versions used provider-specific names (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VOYAGE_API_KEY`, `COHERE_API_KEY`, `JINA_API_KEY`). They're no longer read: the server refuses to start and tells you the new name to use.
 
 | Variable | Default | Notes |
 |---|---|---|
 | `MONGODB_URI` | (required) | `mongodb://` or `mongodb+srv://` |
 | `MONGODB_DB` | `veridoc` | |
-| `EMBED_PROVIDER` | `openai` | `openai` or `voyage` |
-| `EMBED_MODEL` | `text-embedding-3-small` | Deployment name on Azure |
+| `EMBED_PROVIDER` | `openai-compatible` | `openai-compatible` (any OpenAI-style `/embeddings` API) or `voyage` |
+| `EMBED_BASE_URL` | `https://api.openai.com/v1` | e.g. `https://openrouter.ai/api/v1`. Ignored for `voyage` |
+| `EMBED_API_KEY` | | Key for the embeddings provider |
+| `EMBED_MODEL` | `text-embedding-3-small` | e.g. `nvidia/nemotron-3.5-embed-1b:free` on OpenRouter; deployment name on Azure |
 | `EMBED_DIMENSIONS` | `1536` | Must match the vector index — rerun `pnpm db:setup --update` if you change it |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Can point at Azure OpenAI |
-| `OPENAI_API_KEY` | | |
-| `VOYAGE_API_KEY` | | |
 | `RERANK_PROVIDER` | `cohere` | `cohere`, `voyage`, `jina` or `none` |
-| `COHERE_API_KEY` | | |
-| `JINA_API_KEY` | | |
+| `RERANK_API_KEY` | | Key for the rerank provider |
+| `RERANK_MODEL` | provider default | `rerank-v3.5` (Cohere), `rerank-2.5` (Voyage), `jina-reranker-v2-base-multilingual` (Jina) |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible API |
 | `LLM_API_KEY` | | |
 | `LLM_MODEL` | `gpt-4o-mini` | |
@@ -168,14 +171,38 @@ Invalid environment configuration:
 </details>
 
 <details>
+<summary><b>Using OpenRouter (free models)</b></summary>
+
+[OpenRouter](https://openrouter.ai) is OpenAI-compatible, so one key covers embeddings and the LLM:
+
+```bash
+EMBED_PROVIDER=openai-compatible
+EMBED_BASE_URL=https://openrouter.ai/api/v1
+EMBED_API_KEY=<openrouter key>
+EMBED_MODEL=nvidia/nemotron-3.5-embed-1b:free
+EMBED_DIMENSIONS=2048
+EMBED_BATCH_SIZE=256          # fewer, bigger requests: free models are limited per request
+
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=<openrouter key>
+LLM_MODEL=openrouter/free
+
+RERANK_PROVIDER=none
+```
+
+Free (`:free`) models are rate-limited per request (per minute and per day), so keep batches large. The free embedding endpoint may log inputs, so don't ingest confidential documents with it. After changing `EMBED_DIMENSIONS`, run `pnpm db:setup --update` and re-ingest.
+
+</details>
+
+<details>
 <summary><b>Using Azure OpenAI</b></summary>
 
 Azure OpenAI has an OpenAI-compatible v1 API at `https://<resource>.openai.azure.com/openai/v1` (no `api-version` needed). Point both embeddings and the LLM at it, and use your **deployment names** as model names:
 
 ```bash
-EMBED_PROVIDER=openai
-OPENAI_BASE_URL=https://<resource>.openai.azure.com/openai/v1
-OPENAI_API_KEY=<azure key>
+EMBED_PROVIDER=openai-compatible
+EMBED_BASE_URL=https://<resource>.openai.azure.com/openai/v1
+EMBED_API_KEY=<azure key>
 EMBED_MODEL=text-embedding-3-small     # embedding deployment name
 EMBED_DIMENSIONS=1536
 
@@ -215,8 +242,8 @@ vercel link          # framework preset "Other", no build command
 vercel env add MONGODB_URI production
 vercel env add MONGODB_DB production
 vercel env add VERIDOC_API_KEY production
-vercel env add OPENAI_API_KEY production
-vercel env add COHERE_API_KEY production
+vercel env add EMBED_API_KEY production
+vercel env add RERANK_API_KEY production       # skip if RERANK_PROVIDER=none
 vercel env add LLM_API_KEY production
 ```
 

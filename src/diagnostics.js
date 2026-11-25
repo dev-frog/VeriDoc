@@ -34,25 +34,24 @@ export function diagnoseConfig(c) {
   const add = (level, area, message, fix) => out.push({ level, area, message, ...(fix && { fix }) });
 
   // --- secrets that are obviously not secrets
-  for (const name of ['OPENAI_API_KEY', 'LLM_API_KEY', 'VOYAGE_API_KEY', 'COHERE_API_KEY', 'JINA_API_KEY', 'VERIDOC_API_KEY']) {
+  for (const name of ['EMBED_API_KEY', 'RERANK_API_KEY', 'LLM_API_KEY', 'VERIDOC_API_KEY']) {
     if (looksLikeUrl(c[name])) add('error', name, `${name} contains a URL, not a key`, `Put the API key in ${name}; URLs belong in *_BASE_URL`);
   }
 
   // --- base URLs
-  for (const [name, area] of [['OPENAI_BASE_URL', 'embeddings'], ['LLM_BASE_URL', 'llm']]) {
+  for (const [name, area] of [['EMBED_BASE_URL', 'embeddings'], ['LLM_BASE_URL', 'llm']]) {
     const url = c[name];
-    if (area === 'embeddings' && c.EMBED_PROVIDER !== 'openai') continue;
+    if (area === 'embeddings' && c.EMBED_PROVIDER !== 'openai-compatible') continue;
     if (isAzureHost(url) && !/\/openai\/v1\/?$/.test(new URL(url).pathname)) {
       add('error', area, `${name} is an Azure host without the /openai/v1 path (requests will 404)`, `${name}=${url.replace(/\/+$/, '')}/openai/v1`);
     }
   }
 
   // --- embeddings
-  if (c.EMBED_PROVIDER === 'openai' && !c.OPENAI_API_KEY) {
-    add('error', 'embeddings', 'EMBED_PROVIDER=openai but OPENAI_API_KEY is empty', 'Set OPENAI_API_KEY (your OpenAI or Azure key)');
+  if (!c.EMBED_API_KEY) {
+    add('error', 'embeddings', 'EMBED_API_KEY is empty', `Set EMBED_API_KEY to the key for ${c.EMBED_PROVIDER === 'voyage' ? 'Voyage' : c.EMBED_BASE_URL}`);
   }
   if (c.EMBED_PROVIDER === 'voyage') {
-    if (!c.VOYAGE_API_KEY) add('error', 'embeddings', 'EMBED_PROVIDER=voyage but VOYAGE_API_KEY is empty', 'Set VOYAGE_API_KEY');
     if (![256, 512, 1024, 2048].includes(c.EMBED_DIMENSIONS)) {
       add('warn', 'embeddings', `Voyage models usually support 256/512/1024/2048 dimensions, not ${c.EMBED_DIMENSIONS}`, 'EMBED_DIMENSIONS=1024');
     }
@@ -60,9 +59,8 @@ export function diagnoseConfig(c) {
   }
 
   // --- reranker
-  const rerankKey = { cohere: 'COHERE_API_KEY', voyage: 'VOYAGE_API_KEY', jina: 'JINA_API_KEY' }[c.RERANK_PROVIDER];
-  if (rerankKey && !c[rerankKey]) {
-    add('error', 'rerank', `RERANK_PROVIDER=${c.RERANK_PROVIDER} but ${rerankKey} is empty`, `Set ${rerankKey}, or RERANK_PROVIDER=none to skip reranking`);
+  if (c.RERANK_PROVIDER !== 'none' && !c.RERANK_API_KEY) {
+    add('error', 'rerank', `RERANK_PROVIDER=${c.RERANK_PROVIDER} but RERANK_API_KEY is empty`, 'Set RERANK_API_KEY, or RERANK_PROVIDER=none to skip reranking');
   }
 
   // --- LLM

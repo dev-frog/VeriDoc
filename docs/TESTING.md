@@ -31,7 +31,7 @@ The suite runs **fully offline**. The API tests build the real Hono app with an 
 | `tests/parsers.test.js` | PDF (generated on the fly by `tests/helpers/make-pdf.js`), Markdown, DOCX, TXT → sections with page/heading |
 | `tests/chunker.test.js` | Chunk size, sentence boundaries, overlap, section boundaries |
 | `tests/fetch-file.test.js` | Host allowlist, https-only, redirects refused, size limit, timeouts |
-| `tests/embed.test.js` | OpenAI / Azure / Voyage request shapes, retries, error codes |
+| `tests/embed.test.js` | OpenAI-compatible (OpenRouter, OpenAI, Azure) and Voyage request shapes, retries, error codes |
 | `tests/config.test.js` | Env validation and defaults |
 | `tests/indexes.test.js` | Atlas index definitions |
 | `tests/logger.test.js` | Pretty / JSON request logs, levels by status |
@@ -222,9 +222,10 @@ If something fails, take the `X-Request-Id` from the response and search for it 
 | `/health` → 503, `"db":"error"` | MongoDB unreachable | Check `MONGODB_URI`; in Atlas **Network Access**, allow your IP (or `0.0.0.0/0` for Vercel) |
 | `400 invalid_request` with "expected string, received undefined" on a body you did send | Missing `Content-Type: application/json` header | Add the header |
 | `400 invalid_input` on `POST /documents` | URL host not in `SOURCE_URL_HOSTS` | Add the host, or use `*` locally |
-| `/process` → `500 config_error` | Embedding key not set | Set `OPENAI_API_KEY` (or `VOYAGE_API_KEY`) and restart / redeploy |
+| `/process` → `500 config_error` | Embedding key not set | Set `EMBED_API_KEY` and restart / redeploy |
 | `/process` → `502 provider_error` | Embedding API rate limit or outage | Call `/process` again; lower `EMBED_BATCH_SIZE` if it keeps happening |
 | `/process` → `failed`, "redirected" | The URL redirects (short links, Drive/Dropbox share links) | Use the final, direct file URL |
 | Document stuck in `processing` | Nobody is calling `/process` | `/process` only does work when called — keep calling it until `ready` |
 | `401` even with a key | Missing `Bearer ` prefix, or the server has a different `VERIDOC_API_KEY` | Send `Authorization: Bearer <key>`; redeploy after changing env vars on Vercel |
+| Startup error `OPENAI_API_KEY: was renamed, use EMBED_API_KEY` | `.env` or Vercel still uses an old variable name | Rename it as the message says |
 | `pnpm start` fails on missing env vars | `start` doesn't load `.env` | Use `pnpm dev`, or `node --env-file=.env src/server.js` |

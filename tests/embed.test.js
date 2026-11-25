@@ -140,10 +140,10 @@ describe('createEmbedder', () => {
     EMBED_MODEL: 'm',
     EMBED_DIMENSIONS: 2,
     EMBED_BATCH_SIZE: 64,
-    OPENAI_BASE_URL: 'https://api.openai.com/v1',
+    EMBED_BASE_URL: 'https://api.openai.com/v1',
   };
   it('picks the provider from config', () => {
-    expect(createEmbedder({ ...config, EMBED_PROVIDER: 'openai' }).dimensions).toBe(2);
+    expect(createEmbedder({ ...config, EMBED_PROVIDER: 'openai-compatible' }).dimensions).toBe(2);
     expect(createEmbedder({ ...config, EMBED_PROVIDER: 'voyage' }).dimensions).toBe(2);
     expect(() => createEmbedder({ ...config, EMBED_PROVIDER: 'x' })).toThrow(/Unknown/);
   });

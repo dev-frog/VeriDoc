@@ -7,7 +7,8 @@ describe('loadConfig', () => {
   it('applies defaults', () => {
     const c = loadConfig(base);
     expect(c.MONGODB_DB).toBe('veridoc');
-    expect(c.EMBED_PROVIDER).toBe('openai');
+    expect(c.EMBED_PROVIDER).toBe('openai-compatible');
+    expect(c.EMBED_BASE_URL).toBe('https://api.openai.com/v1');
     expect(c.RERANK_PROVIDER).toBe('cohere');
     expect(c.CHUNK_TOKENS).toBe(600);
     expect(c.CHUNK_OVERLAP).toBe(0.12);
@@ -16,9 +17,9 @@ describe('loadConfig', () => {
   });
 
   it('coerces numeric strings and treats blanks as unset', () => {
-    const c = loadConfig({ ...base, TOP_K: '50', OPENAI_API_KEY: '', CHUNK_TOKENS: '' });
+    const c = loadConfig({ ...base, TOP_K: '50', EMBED_API_KEY: '', CHUNK_TOKENS: '' });
     expect(c.TOP_K).toBe(50);
-    expect(c.OPENAI_API_KEY).toBeUndefined();
+    expect(c.EMBED_API_KEY).toBeUndefined();
     expect(c.CHUNK_TOKENS).toBe(600);
   });
 
@@ -36,6 +37,16 @@ describe('loadConfig', () => {
         ['CHUNK_OVERLAP', 'EMBED_PROVIDER', 'MONGODB_URI'],
       );
     }
+  });
+
+  it('accepts "openai" as an alias for openai-compatible', () => {
+    expect(loadConfig({ ...base, EMBED_PROVIDER: 'openai' }).EMBED_PROVIDER).toBe('openai-compatible');
+  });
+
+  it('rejects the old provider-specific variable names with the new name', () => {
+    expect(() => loadConfig({ ...base, OPENAI_API_KEY: 'sk-x' })).toThrow(/OPENAI_API_KEY: was renamed, use EMBED_API_KEY/);
+    expect(() => loadConfig({ ...base, COHERE_API_KEY: 'c' })).toThrow(/RERANK_API_KEY/);
+    expect(() => loadConfig({ ...base, OPENAI_BASE_URL: '' })).not.toThrow();
   });
 
   it('rejects TOP_N > TOP_K', () => {

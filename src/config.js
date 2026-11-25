@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-/** Treat empty strings (e.g. `OPENAI_API_KEY=` in .env) as "not set". */
+/** Treat empty strings (e.g. `EMBED_API_KEY=` in .env) as "not set". */
 const blankToUndefined = (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 
 const optionalString = z.preprocess(blankToUndefined, z.string().optional());
@@ -22,24 +22,27 @@ const EnvSchema = z
     MONGODB_DB: str('veridoc'),
 
     // Embeddings
-    EMBED_PROVIDER: z.preprocess(blankToUndefined, z.enum(['openai', 'voyage']).default('openai')),
+    // openai-compatible: any OpenAI-style /embeddings API (OpenAI, OpenRouter, Azure OpenAI v1, Together, ...).
+    // "openai" is accepted as an alias.
+    EMBED_PROVIDER: z.preprocess(
+      (v) => (v === 'openai' ? 'openai-compatible' : blankToUndefined(v)),
+      z.enum(['openai-compatible', 'voyage']).default('openai-compatible'),
+    ),
+    EMBED_BASE_URL: z.preprocess(blankToUndefined, z.url().default('https://api.openai.com/v1')),
+    EMBED_API_KEY: optionalString,
     EMBED_MODEL: str('text-embedding-3-small'),
     EMBED_DIMENSIONS: int(1536),
-    // OpenAI or any OpenAI-compatible endpoint, e.g. Azure OpenAI v1:
-    // https://<resource>.openai.azure.com/openai/v1 (model = deployment name)
-    OPENAI_BASE_URL: z.preprocess(blankToUndefined, z.url().default('https://api.openai.com/v1')),
-    OPENAI_API_KEY: optionalString,
-    VOYAGE_API_KEY: optionalString,
 
     // Reranker
     RERANK_PROVIDER: z.preprocess(
       blankToUndefined,
       z.enum(['cohere', 'voyage', 'jina', 'none']).default('cohere'),
     ),
-    COHERE_API_KEY: optionalString,
-    JINA_API_KEY: optionalString,
+    RERANK_API_KEY: optionalString,
+    /** Empty = the provider's default model (see DEFAULT_RERANK_MODELS). */
+    RERANK_MODEL: optionalString,
 
-    // LLM (OpenAI-compatible)
+    // LLM: any OpenAI-compatible /chat/completions API
     LLM_BASE_URL: z.preprocess(blankToUndefined, z.url().default('https://api.openai.com/v1')),
     LLM_API_KEY: optionalString,
     LLM_MODEL: str('gpt-4o-mini'),
@@ -74,6 +77,22 @@ const EnvSchema = z
  * @typedef {z.infer<typeof EnvSchema>} Config
  */
 
+/** Default rerank model per provider, used when RERANK_MODEL is empty. */
+export const DEFAULT_RERANK_MODELS = Object.freeze({
+  cohere: 'rerank-v3.5',
+  voyage: 'rerank-2.5',
+  jina: 'jina-reranker-v2-base-multilingual',
+});
+
+/** Old provider-specific names and what replaced them. Setting one is a config error. */
+export const RENAMED_ENV = Object.freeze({
+  OPENAI_BASE_URL: 'EMBED_BASE_URL',
+  OPENAI_API_KEY: 'EMBED_API_KEY',
+  VOYAGE_API_KEY: 'EMBED_API_KEY (EMBED_PROVIDER=voyage) or RERANK_API_KEY (RERANK_PROVIDER=voyage)',
+  COHERE_API_KEY: 'RERANK_API_KEY',
+  JINA_API_KEY: 'RERANK_API_KEY',
+});
+
 export class ConfigError extends Error {
   /** @param {string[]} problems */
   constructor(problems) {
@@ -92,11 +111,14 @@ export class ConfigError extends Error {
  */
 export function loadConfig(env) {
   const result = EnvSchema.safeParse(env);
-  if (!result.success) {
-    const problems = result.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);
-    throw new ConfigError(problems);
+  const problems = result.success
+    ? []
+    : result.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);
+  for (const [old, now] of Object.entries(RENAMED_ENV)) {
+    if (blankToUndefined(env[old]) !== undefined) problems.push(`${old}: was renamed, use ${now}`);
   }
-  return Object.freeze(result.data);
+  if (problems.length) throw new ConfigError(problems);
+  return Object.freeze(/** @type {Config} */ (result.data));
 }
 
 /** @type {Readonly<Config> | undefined} */

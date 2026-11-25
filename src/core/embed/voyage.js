@@ -16,7 +16,7 @@ export function createVoyageEmbedder({ apiKey, model, dimensions, batchSize = 64
   return {
     dimensions,
     async embed(texts, { inputType = 'document' } = {}) {
-      if (!apiKey) throw new CoreError(ErrorCodes.CONFIG_ERROR, 'VOYAGE_API_KEY is not set');
+      if (!apiKey) throw new CoreError(ErrorCodes.CONFIG_ERROR, 'EMBED_API_KEY is not set (EMBED_PROVIDER=voyage)');
       /** @type {number[][]} */
       const out = [];
       for (const batch of toBatches(texts, batchSize)) {
