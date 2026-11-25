@@ -1,85 +1,142 @@
-# VeriDoc
+<div align="center">
 
-> Every answer, traced to its source.
+<img src="docs/assets/veridoc-banner.svg" alt="VeriDoc — Search smarter. Trust the source. An otter in sunglasses with a bird on its head holds a verified document." width="100%" />
 
-VeriDoc is an open-source RAG engine backend. You upload documents (PDF, Markdown, DOCX, TXT). VeriDoc chunks them and stores the embeddings and text in MongoDB Atlas. It answers questions with hybrid search: BM25 full-text and vector search, fused with `$rankFusion`, then reranked. The LLM must cite every claim as `[Source N]`, and each citation is checked against the chunks that were actually retrieved.
+An open-source RAG engine backend. Drop in your PDFs, Markdown, Word and text files. Ask questions. Get answers where every claim points back to the exact chunk it came from.
 
-**Status:** Steps 1–3 are done (project setup, data model and indexes, ingestion). Search and generation come in later steps.
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ee59d?style=flat-square)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A520.10-2ee59d?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
+[![Hono](https://img.shields.io/badge/Hono-4-2ee59d?style=flat-square&logo=hono&logoColor=white)](https://hono.dev)
+[![MongoDB Atlas](https://img.shields.io/badge/MongoDB_Atlas-8.1%2B-2ee59d?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/atlas)
+[![Vercel](https://img.shields.io/badge/deploy-Vercel-2ee59d?style=flat-square&logo=vercel&logoColor=white)](https://vercel.com)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-2ee59d?style=flat-square)](#contributing)
 
-## Tech stack
+[Quick start](#-quick-start) · [API docs](docs/API.md) · [Testing guide](docs/TESTING.md) · [Deploy](#-deploy-to-vercel) · [Roadmap](#-roadmap)
 
-- JavaScript (ESM), Node.js 20.10+, pnpm
-- [Hono](https://hono.dev): `@hono/node-server` for local dev, Vercel for deployment
-- MongoDB Atlas 8.1+ with the official `mongodb` driver (Vector Search, Atlas Search, `$rankFusion`)
-- zod and `@hono/zod-validator` for validation
-- vitest for tests
-- External AI providers called with `fetch`: OpenAI or Voyage for embeddings, Cohere, Voyage or Jina for reranking, and any OpenAI-compatible LLM
+</div>
 
-## Project layout
+---
 
-```
-veridoc/
-├── src/
-│   ├── core/          # the engine (no Hono or HTTP code here)
-│   ├── api/           # Hono app and routes (app.js, index.js)
-│   ├── db/            # cached MongoClient (client.js)
-│   ├── config.js      # env validation with zod
-│   └── server.js      # local dev entry
-├── api/index.js       # Vercel entry (hono/vercel handle)
-├── scripts/           # setup-indexes, ingest-cli, eval (later steps)
-├── tests/
-├── .env.example
-└── vercel.json
-```
+## ✨ Why VeriDoc?
 
-## Run locally
+Most RAG demos give you an answer and a vague "sources" list. VeriDoc is built around one rule: **if the model can't point to a retrieved chunk, it doesn't get to say it.**
 
-Requirements: Node.js 20.10+ and pnpm.
+- 🔎 **Hybrid retrieval** — BM25 full-text *and* vector search, fused with MongoDB's `$rankFusion`, then reranked.
+- 🧾 **Verifiable citations** — the LLM must cite every claim as `[Source N]`, and each citation is checked against the chunks that were actually retrieved.
+- 📄 **Real document structure** — chunks keep their page number (PDF) and heading path (`Guide > Install > Linux`) for Markdown and DOCX.
+- ☁️ **Serverless-native** — stateless Hono API on Vercel. Long jobs are split into small, repeatable batches that fit inside the function time limit.
+- 🔌 **Bring your own providers** — OpenAI, Azure OpenAI or Voyage for embeddings; Cohere, Voyage or Jina for reranking; any OpenAI-compatible LLM.
+- 🧱 **Clean core** — the engine in `src/core` has no HTTP code, so you can use it from the API, a CLI or your own app.
+
+> **Status:** 🚧 Early but working. Ingestion (upload → parse → chunk → embed) is done and tested. Hybrid search and cited answers are next. See the [roadmap](#-roadmap).
+
+## 🏗️ How it works
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="VeriDoc architecture: your app talks to a Hono API on Vercel; the core fetches, parses, chunks and embeds files; MongoDB Atlas stores documents, chunks and search indexes; external AI providers handle embeddings, reranking and the LLM." width="100%" />
+</p>
+
+### Ingestion
+
+Files are uploaded to storage first (Vercel Blob or any allowed https host), and VeriDoc gets the URL. Processing happens in small steps, so it never hits the serverless timeout:
+
+<p align="center">
+  <img src="docs/assets/ingestion-flow.svg" alt="Document lifecycle: POST /documents creates a pending document; repeated POST /documents/:id/process calls download, parse, chunk and embed in batches until the document is ready or failed." width="100%" />
+</p>
+
+### Answering (coming next)
+
+<p align="center">
+  <img src="docs/assets/hybrid-search.svg" alt="Answer pipeline: the question runs through BM25 and vector search, results are fused with $rankFusion, reranked, and sent to the LLM, which must cite each claim as [Source N]." width="100%" />
+</p>
+
+## 🚀 Quick start
+
+**You need:** Node.js 20.10+, [pnpm](https://pnpm.io), and a MongoDB Atlas cluster (8.1+, the free M0 tier works). For embeddings you also need an OpenAI, Azure OpenAI or Voyage key.
 
 ```bash
+git clone https://github.com/dev-frog/VeriDoc.git
+cd VeriDoc
 pnpm install
-cp .env.example .env        # set MONGODB_URI at minimum
-pnpm test
-pnpm dev                    # node --watch --env-file=.env src/server.js
+
+cp .env.example .env     # set MONGODB_URI, OPENAI_API_KEY and VERIDOC_API_KEY
+pnpm check               # checks config + every external service
+pnpm db:setup            # creates collections and search indexes
+pnpm dev                 # http://localhost:3000
 ```
 
-Check that the server is up:
+Check that it's alive:
 
 ```bash
-curl -i http://localhost:3000/health
-# 200 {"status":"ok","version":"0.1.0","db":"ok"}
+curl http://localhost:3000/health
+# {"status":"ok","version":"0.1.0","db":"ok"}
 ```
 
-If MongoDB can't be reached, the response is `503 {"status":"degraded","version":"0.1.0","db":"error"}`.
+Ingest your first document:
 
-| Script | What it does |
+```bash
+export KEY=<your VERIDOC_API_KEY>
+
+# 1. Register a file by URL (set SOURCE_URL_HOSTS=* in .env to allow any https host locally)
+curl -s -X POST localhost:3000/documents \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"url":"https://raw.githubusercontent.com/honojs/hono/main/README.md","fileName":"hono-readme.md"}'
+# {"id":"6750c3…","status":"pending"}
+
+# 2. Process it until it's ready
+ID=<id from step 1>
+until curl -s -X POST localhost:3000/documents/$ID/process -H "Authorization: Bearer $KEY" \
+  | tee /dev/stderr | grep -qE '"status":"(ready|failed)"'; do sleep 1; done
+```
+
+Or ingest a whole local folder with no API calls at all:
+
+```bash
+pnpm ingest ./my-docs
+```
+
+👉 Full endpoint reference: **[docs/API.md](docs/API.md)** · How to test everything: **[docs/TESTING.md](docs/TESTING.md)**
+
+## 📡 API at a glance
+
+| Method | Path | What it does |
+|---|---|---|
+| `GET` | `/health` | Liveness + database check. No auth |
+| `POST` | `/documents` | Register a file by URL → `202 { id, status: "pending" }` |
+| `POST` | `/documents/:id/process` | Do the next batch of work → `{ status, processed, total }` |
+| `GET` | `/documents` | List documents (newest first, cursor pagination, status filter) |
+| `GET` | `/documents/:id` | Get one document |
+| `DELETE` | `/documents/:id` | Delete a document and all its chunks |
+
+All `/documents` routes need `Authorization: Bearer $VERIDOC_API_KEY`. Errors always look like `{ "error": { "code", "message" } }`. Details, examples and every error code are in **[docs/API.md](docs/API.md)**.
+
+## 🧰 Scripts
+
+| Command | What it does |
 |---|---|
-| `pnpm dev` | Starts the dev server and restarts it when files change. Loads `.env`, so that file must exist |
-| `pnpm start` | Starts the server once. Does **not** load `.env`; the variables must already be set in the environment |
-| `pnpm test` | Runs the test suite once |
-| `pnpm test:watch` | Runs vitest in watch mode |
-| `pnpm db:setup` | Creates collections and indexes (skips any that already exist), then waits until the search indexes are ready. Add `--update` to replace existing search index definitions |
-| `pnpm ingest <folder>` | Ingests every `.pdf`, `.md`, `.txt` and `.docx` file in a local folder (including subfolders), straight into MongoDB. Skips files already ingested; `--force` re-ingests them |
+| `pnpm dev` | Dev server with auto-restart. Loads `.env` |
+| `pnpm start` | Starts the server once. Does **not** load `.env` — variables must already be in the environment |
+| `pnpm test` | Runs the unit + API test suite (no database or API keys needed) |
+| `pnpm test:watch` | Tests in watch mode |
+| `pnpm check` | Checks config and makes one tiny call to MongoDB, embeddings, reranker and LLM. `--offline` checks config only |
+| `pnpm db:setup` | Creates collections and indexes, then waits for the search indexes. `--update` replaces existing search index definitions |
+| `pnpm ingest <folder>` | Ingests every `.pdf`, `.md`, `.txt`, `.docx` in a folder (recursively). `--force` re-ingests files already done |
 
-If the config is invalid, the server stops at startup and lists every problem, for example:
+## ⚙️ Configuration
 
-```
-Invalid environment configuration:
-  - MONGODB_URI: is required
-```
+Only `MONGODB_URI` is required to boot. Each provider checks for its own key the first time it's used, so `/health` works before you add any AI keys. Empty values (`OPENAI_API_KEY=`) count as not set.
 
-## Environment variables
-
-Only `MONGODB_URI` is required right now. Each provider checks for its own API key when it's first used, so `/health` works before you add any AI keys.
+<details>
+<summary><b>All environment variables</b></summary>
 
 | Variable | Default | Notes |
 |---|---|---|
 | `MONGODB_URI` | (required) | `mongodb://` or `mongodb+srv://` |
 | `MONGODB_DB` | `veridoc` | |
 | `EMBED_PROVIDER` | `openai` | `openai` or `voyage` |
-| `EMBED_MODEL` | `text-embedding-3-small` | |
-| `EMBED_DIMENSIONS` | `1536` | |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI embeddings. Can point at Azure (see below) |
+| `EMBED_MODEL` | `text-embedding-3-small` | Deployment name on Azure |
+| `EMBED_DIMENSIONS` | `1536` | Must match the vector index — rerun `pnpm db:setup --update` if you change it |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Can point at Azure OpenAI |
 | `OPENAI_API_KEY` | | |
 | `VOYAGE_API_KEY` | | |
 | `RERANK_PROVIDER` | `cohere` | `cohere`, `voyage`, `jina` or `none` |
@@ -88,24 +145,32 @@ Only `MONGODB_URI` is required right now. Each provider checks for its own API k
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible API |
 | `LLM_API_KEY` | | |
 | `LLM_MODEL` | `gpt-4o-mini` | |
-| `VERIDOC_API_KEY` | | Protects VeriDoc's own endpoints |
-| `BLOB_READ_WRITE_TOKEN` | | Vercel Blob (filled in for you when you connect a Blob store) |
-| `CHUNK_TOKENS` | `600` | Minimum 50 |
-| `CHUNK_OVERLAP` | `0.12` | Fraction between 0 and 0.5 |
+| `VERIDOC_API_KEY` | | Protects VeriDoc's own endpoints. Required in production |
+| `BLOB_READ_WRITE_TOKEN` | | Vercel Blob (added for you when you connect a Blob store) |
+| `CHUNK_TOKENS` | `600` | Target chunk size in tokens. Minimum 50 |
+| `CHUNK_OVERLAP` | `0.12` | Fraction from 0 to 0.5 |
 | `TOP_K` | `30` | Candidates retrieved before reranking |
 | `TOP_N` | `5` | Chunks kept after reranking. Must be ≤ `TOP_K` |
-| `SOURCE_URL_HOSTS` | `*.public.blob.vercel-storage.com` | Comma-separated hosts that `POST /documents` may download from: `*`, `*.example.com` or exact hosts. Only https is allowed |
+| `SOURCE_URL_HOSTS` | `*.public.blob.vercel-storage.com` | Hosts `POST /documents` may download from: `*`, `*.example.com` or exact hosts. https only |
 | `MAX_FILE_MB` | `50` | Largest file that will be downloaded |
-| `INGEST_BATCH_SIZE` | `256` | Chunks embedded per `POST /documents/:id/process` call |
+| `INGEST_BATCH_SIZE` | `256` | Chunks embedded per `/process` call |
 | `EMBED_BATCH_SIZE` | `64` | Texts per embedding API request |
-| `LOG_FORMAT` | `pretty` in dev, `json` in production | Request log format: `pretty`, `json` or `off` |
+| `LOG_FORMAT` | `pretty` locally, `json` in production | `pretty`, `json` or `off` |
 | `PORT` | `3000` | Local dev only |
 
-Empty values (for example `OPENAI_API_KEY=`) count as not set.
+If the config is invalid, the server refuses to start and lists every problem:
 
-### Using Azure OpenAI
+```
+Invalid environment configuration:
+  - MONGODB_URI: is required
+```
 
-Azure OpenAI has an OpenAI-compatible v1 API at `https://<resource>.openai.azure.com/openai/v1`. You don't need an `api-version` for it. Point both the embeddings and the LLM at it, and use your **deployment names** as the model names:
+</details>
+
+<details>
+<summary><b>Using Azure OpenAI</b></summary>
+
+Azure OpenAI has an OpenAI-compatible v1 API at `https://<resource>.openai.azure.com/openai/v1` (no `api-version` needed). Point both embeddings and the LLM at it, and use your **deployment names** as model names:
 
 ```bash
 EMBED_PROVIDER=openai
@@ -119,26 +184,24 @@ LLM_API_KEY=<azure key>
 LLM_MODEL=gpt-5-chat                   # chat deployment name
 ```
 
-For `*.openai.azure.com` hosts, VeriDoc sends the key in the `api-key` header instead of `Authorization: Bearer`. Check that both deployments answer:
-
-```bash
-curl -s "$OPENAI_BASE_URL/embeddings" -H "api-key: $OPENAI_API_KEY" \
-  -H "Content-Type: application/json" -d '{"model":"text-embedding-3-small","input":"hello"}' | head -c 300
-curl -s "$LLM_BASE_URL/chat/completions" -H "api-key: $LLM_API_KEY" \
-  -H "Content-Type: application/json" -d '{"model":"gpt-5-chat","messages":[{"role":"user","content":"Say hi"}]}'
-```
+For `*.openai.azure.com` hosts, VeriDoc sends the key in the `api-key` header instead of `Authorization: Bearer`. Run `pnpm check` to confirm both deployments answer.
 
 Docs: https://learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle
 
-## Deploy to Vercel
+</details>
 
-### 1. Prepare MongoDB Atlas
+## ▲ Deploy to Vercel
 
-- Under **Network Access**, allow `0.0.0.0/0`. Vercel functions don't have fixed IP addresses unless you pay for the static IP add-on.
+<details>
+<summary><b>Step-by-step</b></summary>
+
+**1. Prepare MongoDB Atlas**
+
+- Under **Network Access**, allow `0.0.0.0/0` (Vercel functions don't have fixed IPs unless you buy the static IP add-on).
 - Create a database user with a strong password.
 - Copy the `mongodb+srv://…` connection string from **Connect → Drivers**.
 
-### 2. Install the CLI and link the project
+**2. Link the project**
 
 ```bash
 pnpm add -g vercel
@@ -146,190 +209,115 @@ vercel login
 vercel link          # framework preset "Other", no build command
 ```
 
-### 3. Set environment variables
-
-Each command asks you for the value:
+**3. Set environment variables** (each command prompts for the value)
 
 ```bash
 vercel env add MONGODB_URI production
-vercel env add MONGODB_DB production          # veridoc
+vercel env add MONGODB_DB production
 vercel env add VERIDOC_API_KEY production
-# needed in later steps:
 vercel env add OPENAI_API_KEY production
 vercel env add COHERE_API_KEY production
 vercel env add LLM_API_KEY production
 ```
 
-Run the same commands with `preview` instead of `production`, and with `development` if you use `vercel dev`. You can also set the variables in the dashboard under **Project → Settings → Environment Variables**.
+Repeat with `preview` (and `development` if you use `vercel dev`), or use **Project → Settings → Environment Variables**. For `BLOB_READ_WRITE_TOKEN`, create a Blob store under **Storage → Create → Blob** and connect it to the project.
 
-To get `BLOB_READ_WRITE_TOKEN`, create a Blob store under **Storage → Create → Blob** and connect it to the project. Vercel adds the token for you.
-
-### 4. Deploy
+**4. Deploy and verify**
 
 ```bash
-vercel            # preview deployment
-vercel --prod     # production
+vercel --prod
 curl -i https://<your-project>.vercel.app/health
 ```
 
-Env vars only apply to deployments made after you set them. If you change one, redeploy.
-
-### 5. Check the deployment
-
 - `/health` returns 200 with `"db":"ok"`.
-- `/anything` returns `{"error":{"code":"not_found",...}}`. A 404 that isn't JSON means the routing to `/api` isn't working.
-- In **Settings → Functions**, Fluid compute is on. Without it, Hobby functions may be limited to 60s instead of the 300s set in `vercel.json`.
+- `/anything` returns a JSON `not_found` error. A non-JSON 404 means the rewrite to `/api` isn't working.
+- **Settings → Functions**: Fluid compute is on. Without it, Hobby functions may be capped at 60 s instead of the 300 s in `vercel.json`.
 
-### Vercel notes
+Env vars only apply to deployments made after you set them — redeploy after changing one.
 
-- `vercel.json` sends every path to `api/index.js` and sets `maxDuration: 300`.
-- `api/index.js` exports one handler per HTTP method (`GET`, `POST`, …). If the deploy fails or routes don't match, compare with:
-  - https://hono.dev/docs/getting-started/vercel
-  - https://vercel.com/docs/functions/runtimes/node-js
-  - https://vercel.com/docs/functions/configuring-functions/duration
-- The MongoClient is cached on `globalThis`, so warm requests reuse one connection pool. Vercel's `attachDatabasePool` (from `@vercel/functions`) may be added later.
+</details>
 
-## Limits (Vercel serverless)
+**Serverless limits VeriDoc is designed around:** ~300 s per function call (so work is batched), 4.5 MB request bodies (so files go to Blob first and the API gets a URL), no local ML models, and no in-memory state between requests.
 
-- Each function call can run for at most about 300s, so long work is split into batches.
-- Request bodies are limited to 4.5 MB, so files are uploaded to Vercel Blob first and the API receives the URL.
-- No ML models run locally; embeddings, reranking and the LLM are all external APIs.
-- No in-memory state is kept between requests.
+## 🗂️ Project layout
 
-## Data model
+```
+veridoc/
+├── src/
+│   ├── core/          # the engine: ingest (fetch, parsers, chunker), embed providers, errors
+│   ├── api/           # Hono app, routes, auth, request logger
+│   ├── db/            # MongoClient, collections, indexes, ingest repository
+│   ├── config.js      # env validation with zod
+│   └── server.js      # local dev entry
+├── api/index.js       # Vercel entry
+├── scripts/           # check, setup-indexes, ingest-cli, smoke-test.sh
+├── tests/             # vitest suites (in-memory repo, no network)
+└── docs/              # API reference, testing guide, diagrams
+```
 
-Typedefs are in `src/core/types.js`.
+<details>
+<summary><b>Data model & indexes</b></summary>
 
-**`documents`**: `{ _id, fileName, mimeType, sourceUrl, pageCount, status, error, chunkCount, processedCount, parsedAt, createdAt, updatedAt }`, where `status` is `pending`, `processing`, `ready` or `failed`.
+Typedefs live in `src/core/types.js`.
 
-**`chunks`**: `{ _id, docId, chunkIndex, text, embedding, page, heading, tokenCount, createdAt }`. `embedding` is missing until the chunk has been embedded.
+**`documents`** — `{ _id, fileName, mimeType, sourceUrl, pageCount, status, error, chunkCount, processedCount, parsedAt, createdAt, updatedAt }`, where `status` is `pending`, `processing`, `ready` or `failed`.
+
+**`chunks`** — `{ _id, docId, chunkIndex, text, embedding, page, heading, tokenCount, createdAt }`. `embedding` is missing until the chunk has been embedded.
 
 | Collection | Index | Type |
 |---|---|---|
 | `chunks` | `docId_chunkIndex` (`{ docId: 1, chunkIndex: 1 }`, unique) | Regular |
-| `chunks` | `chunks_vector`: `embedding` (cosine, `EMBED_DIMENSIONS`), filter field `docId` | Atlas Vector Search |
-| `chunks` | `chunks_text`: `text`, `heading` (lucene.standard), plus `docId` for filtering | Atlas Search (BM25) |
+| `chunks` | `chunks_vector` — `embedding` (cosine, `EMBED_DIMENSIONS`), filter on `docId` | Atlas Vector Search |
+| `chunks` | `chunks_text` — `text`, `heading` (lucene.standard), plus `docId` | Atlas Search (BM25) |
 | `documents` | `createdAt_desc` | Regular |
 
-Run this once per database, and again whenever `EMBED_DIMENSIONS` changes:
+The free M0 tier allows up to 3 search indexes. If you change `EMBED_DIMENSIONS`, run `pnpm db:setup --update` and re-embed every document.
 
-```bash
-pnpm db:setup
-```
+</details>
 
-Search indexes need an Atlas cluster; the free M0 tier allows up to 3 of them. If you change `EMBED_DIMENSIONS`, run `pnpm db:setup --update` and re-embed every document, because existing vectors won't match the new size.
+<details>
+<summary><b>How chunking works</b></summary>
 
-## API
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | `{ status, version, db }`: 200 when MongoDB answers, 503 when it doesn't. No auth |
-| `POST` | `/documents` | Body `{ url, fileName }`. Registers a document and returns `202 { id, status: "pending" }` |
-| `POST` | `/documents/:id/process` | Does the next batch of work and returns `{ status, processed, total }`. Call it until `status` is `ready` or `failed` |
-| `GET` | `/documents` | Lists documents, newest first. Query: `limit` (1–100, default 20), `cursor`, `status`. Returns `{ items, nextCursor }` |
-| `GET` | `/documents/:id` | A single document |
-| `DELETE` | `/documents/:id` | Deletes the document and its chunks. Returns `{ id, deleted: true }` |
-
-Every `/documents` route needs `Authorization: Bearer $VERIDOC_API_KEY`. If `VERIDOC_API_KEY` isn't set, local dev lets requests through, and production (`NODE_ENV=production`) answers 500.
-
-Errors always use the shape `{ "error": { "code": "...", "message": "..." } }` with a matching HTTP status. Errors that are worth retrying also include `"retryable": true`.
-
-| Code | Status | Meaning |
-|---|---|---|
-| `invalid_request` | 400 | The body or query failed validation |
-| `invalid_input` | 400 | The URL host isn't in `SOURCE_URL_HOSTS` |
-| `unauthorized` | 401 | Missing or wrong API key |
-| `not_found` | 404 | Unknown document or route |
-| `unsupported_type` | 415 | The file extension isn't `.pdf`, `.md`, `.markdown`, `.txt` or `.docx` |
-| `provider_error` / `fetch_failed` | 502 | The embedding API or file download failed. Call `/process` again |
-| `config_error` | 500 | A required provider key is missing |
-
-### Request logs
-
-Every request writes one log line. Responses with status ≥ 500 go to stderr, everything else to stdout.
-
-```
-16:01:37 GET /health 200 921ms  req=8a08e008-…
-16:01:37 GET /documents 401 0ms  req=a2a01b6f-…
-16:02:10 POST /documents/66f…/process 502 3120ms provider_error  req=1796be18-…
-```
-
-With `LOG_FORMAT=json` (the default on Vercel), each line is a JSON object you can filter in **Vercel → Project → Logs**:
-
-```json
-{"level":"error","time":"2026-11-11T16:02:10.512Z","requestId":"fra1::abc","method":"POST","path":"/documents/66f…/process","status":502,"durationMs":3120,"error":"provider_error"}
-```
-
-**How the request ID is chosen:**
-- **Your own ID:** if the request sends a valid `X-Request-Id` header, that value is used.
-- **On Vercel:** otherwise the `x-vercel-id` header is used.
-- **Otherwise:** a new random UUID.
-
-The ID is returned in the `X-Request-Id` response header. For 5xx errors, the error details are logged with `[req=<id>]`, so you can find the full error from the ID a client reports.
-
-Headers and request bodies are never logged, so API keys and document contents stay out of the logs.
-
-### How ingestion works
-
-1. `POST /documents` only stores the URL. Nothing is downloaded yet.
-2. The first `POST /documents/:id/process` downloads the file and parses it into sections with page and heading. It then splits them into chunks and stores the chunks **without** embeddings.
-3. Each call (including the first) embeds the next `INGEST_BATCH_SIZE` chunks that don't have an embedding yet. When every chunk has one, the status becomes `ready`.
-
-Because each call does a bounded amount of work, it fits within Vercel's time limit. Calling it repeatedly is safe:
-- Chunks are unique per `(docId, chunkIndex)`.
-- Each call only picks up chunks that don't have an embedding yet.
-- Once a document is `ready` or `failed`, further calls do nothing.
-
-Two calls at the same moment can embed the same batch twice. That wastes some API usage but gives the same result.
-
-**Which problems fail the document:**
-- **The document is marked `failed`** if the file can't be parsed, has no extractable text (scanned PDFs need OCR, which isn't supported), or the download returns a 4xx error. To try again, delete it and create it again.
-- **The document stays `processing`** if the download returns a 5xx error or the embedding API fails. The call returns 502; call `/process` again later.
-
-**What the chunks look like:**
-- **Chunk size:** about `CHUNK_TOKENS` tokens, counted with js-tiktoken `cl100k_base`.
-- **Boundaries:** chunks contain whole sentences. A sentence is only split if it alone is longer than `CHUNK_TOKENS`.
+- **Size:** about `CHUNK_TOKENS` tokens, counted with js-tiktoken `cl100k_base`.
+- **Boundaries:** whole sentences. A sentence is only split if it alone is longer than `CHUNK_TOKENS`.
 - **Overlap:** each chunk repeats whole trailing sentences from the previous one, up to `CHUNK_OVERLAP`.
-- **Sections:** a chunk never spans two sections, so each chunk has exactly one page and one heading path (for example `Guide > Install > Linux`).
-- **Embedding input:** the heading path is added in front of the text that gets embedded. The stored chunk text stays unchanged.
-
-**What each parser keeps:**
+- **Sections:** a chunk never spans two sections, so it has exactly one page and one heading path.
+- **Embedding input:** the heading path is prepended to the embedded text; the stored text stays unchanged.
 
 | Format | `page` | `heading` |
 |---|---|---|
-| PDF | Page number | Always null |
-| Markdown | Null | Heading path from `#` headings |
-| DOCX | Null | Heading path from Word's built-in **Heading 1–6** styles. Bold text formatted to look like a heading isn't recognized |
-| TXT | Null | Null |
+| PDF | Page number | null |
+| Markdown | null | Path from `#` headings |
+| DOCX | null | Path from Word's built-in **Heading 1–6** styles (bold text styled to look like a heading isn't detected) |
+| TXT | null | null |
 
-### Try it
+Scanned PDFs without a text layer need OCR, which isn't supported yet.
 
-```bash
-pnpm dev
-export KEY=<your VERIDOC_API_KEY>
+</details>
 
-# 1. register (url must be https on an allowed host; set SOURCE_URL_HOSTS=* in .env for local testing)
-curl -s -X POST localhost:3000/documents -H "Authorization: Bearer $KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://raw.githubusercontent.com/honojs/hono/main/README.md","fileName":"hono-readme.md"}'
-# -> {"id":"<id>","status":"pending"}
+## 🗺️ Roadmap
 
-# 2. process until ready
-ID=<id>
-until curl -s -X POST localhost:3000/documents/$ID/process -H "Authorization: Bearer $KEY" | tee /dev/stderr | grep -qE '"status":"(ready|failed)"'; do sleep 1; done
+- [x] Project setup, config validation, `/health`
+- [x] Data model, Atlas Vector + Search indexes
+- [x] Ingestion: PDF / Markdown / DOCX / TXT parsers, sentence-aware chunker, batched embedding
+- [x] Document API, request IDs, structured logs, `pnpm check` diagnostics
+- [ ] Hybrid search endpoint (`$rankFusion` + rerank)
+- [ ] Answer endpoint with `[Source N]` citations and citation verification
+- [ ] Evaluation scripts
+- [ ] Upload helper for Vercel Blob
+- [ ] OCR for scanned PDFs
 
-# 3. inspect, list, delete
-curl -s localhost:3000/documents/$ID -H "Authorization: Bearer $KEY"
-curl -s "localhost:3000/documents?limit=5" -H "Authorization: Bearer $KEY"
-curl -s -X DELETE localhost:3000/documents/$ID -H "Authorization: Bearer $KEY"
-```
+## 🤝 Contributing
 
-To ingest a local folder without the API:
+Issues and PRs are welcome! To get going:
 
-```bash
-pnpm ingest ./my-docs
-```
+1. Fork the repo and create a branch: `git checkout -b feat/my-change`
+2. `pnpm install && pnpm test` — the suite runs fully offline
+3. Keep HTTP code in `src/api` and engine code in `src/core`
+4. Add tests for new behaviour, then open a PR describing what and why
 
-## License
+Found a security issue? Please open a private advisory on GitHub rather than a public issue.
 
-MIT
+## 📄 License
+
+[MIT](LICENSE) © 2026 frog

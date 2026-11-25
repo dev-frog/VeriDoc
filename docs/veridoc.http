@@ -1,0 +1,71 @@
+### VeriDoc API — runnable requests
+# Works with the VS Code "REST Client" extension (humao.rest-client) and JetBrains HTTP Client.
+# 1. Set @key to your VERIDOC_API_KEY.
+# 2. Run "Create document"; @docId is filled in automatically from its response.
+# 3. Run "Process next batch" until status is "ready".
+
+@baseUrl = http://localhost:3000
+@key = change-me
+@docId = {{create.response.body.id}}
+
+### Health (no auth)
+GET {{baseUrl}}/health
+
+### Create document
+# @name create
+POST {{baseUrl}}/documents
+Authorization: Bearer {{key}}
+Content-Type: application/json
+
+{
+  "url": "https://raw.githubusercontent.com/honojs/hono/main/README.md",
+  "fileName": "hono-readme.md"
+}
+
+### Process next batch (repeat until "ready")
+POST {{baseUrl}}/documents/{{docId}}/process
+Authorization: Bearer {{key}}
+
+### Get document
+GET {{baseUrl}}/documents/{{docId}}
+Authorization: Bearer {{key}}
+
+### List documents
+GET {{baseUrl}}/documents?limit=10
+Authorization: Bearer {{key}}
+
+### List only ready documents
+GET {{baseUrl}}/documents?limit=10&status=ready
+Authorization: Bearer {{key}}
+
+### Delete document
+DELETE {{baseUrl}}/documents/{{docId}}
+Authorization: Bearer {{key}}
+
+
+### ---------- Error cases ----------
+
+### 401 — no API key
+GET {{baseUrl}}/documents
+
+### 400 — url must be https
+POST {{baseUrl}}/documents
+Authorization: Bearer {{key}}
+Content-Type: application/json
+
+{ "url": "http://example.com/a.md", "fileName": "a.md" }
+
+### 415 — unsupported file type
+POST {{baseUrl}}/documents
+Authorization: Bearer {{key}}
+Content-Type: application/json
+
+{ "url": "https://example.com/photo.png", "fileName": "photo.png" }
+
+### 400 — limit out of range
+GET {{baseUrl}}/documents?limit=500
+Authorization: Bearer {{key}}
+
+### 404 — unknown document
+GET {{baseUrl}}/documents/000000000000000000000000
+Authorization: Bearer {{key}}
