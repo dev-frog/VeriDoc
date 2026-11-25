@@ -38,6 +38,27 @@ Authorization: Bearer {{key}}
 GET {{baseUrl}}/documents?limit=10&status=ready
 Authorization: Bearer {{key}}
 
+### Search (hybrid: BM25 + vector, reranked)
+POST {{baseUrl}}/search
+Authorization: Bearer {{key}}
+Content-Type: application/json
+
+{ "query": "supported runtimes", "topN": 3 }
+
+### Ask (answer with verified [Source N] citations)
+POST {{baseUrl}}/ask
+Authorization: Bearer {{key}}
+Content-Type: application/json
+
+{ "question": "Which runtimes does Hono support?" }
+
+### Ask, limited to one document
+POST {{baseUrl}}/ask
+Authorization: Bearer {{key}}
+Content-Type: application/json
+
+{ "question": "Which runtimes does Hono support?", "documentIds": ["{{docId}}"] }
+
 ### Delete document
 DELETE {{baseUrl}}/documents/{{docId}}
 Authorization: Bearer {{key}}
@@ -65,6 +86,13 @@ Content-Type: application/json
 ### 400 — limit out of range
 GET {{baseUrl}}/documents?limit=500
 Authorization: Bearer {{key}}
+
+### 400 — empty search query
+POST {{baseUrl}}/search
+Authorization: Bearer {{key}}
+Content-Type: application/json
+
+{ "query": "" }
 
 ### 404 — unknown document
 GET {{baseUrl}}/documents/000000000000000000000000

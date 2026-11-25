@@ -76,7 +76,9 @@ export function toUnits(text, maxTokens, countTokens) {
       if (units.length) units[units.length - 1].raw += segment;
       continue;
     }
-    const tokens = countTokens(segment.trim());
+    // Every token covers at least one character, so a segment this long can't fit; skip counting it whole
+    // (BPE tokenizers get very slow on long runs without spaces, e.g. base64 in a PDF).
+    const tokens = segment.length > maxTokens * 16 ? Infinity : countTokens(segment.trim());
     if (tokens <= maxTokens) units.push({ raw: segment, tokens });
     else units.push(...splitLongSentence(segment, maxTokens, countTokens));
   }
@@ -95,15 +97,24 @@ function splitLongSentence(sentence, maxTokens, countTokens) {
   /** @type {Unit[]} */
   const words = [];
   for (const w of sentence.match(/\S+\s*/g) ?? []) {
-    const tokens = countTokens(w.trim());
+    const tokens = w.length > maxTokens * 16 ? Infinity : countTokens(w.trim());
     if (tokens <= maxTokens) {
       words.push({ raw: w, tokens });
       continue;
     }
-    const step = Math.max(1, Math.floor((w.length * maxTokens) / tokens));
-    for (let i = 0; i < w.length; i += step) {
-      const raw = w.slice(i, i + step);
-      words.push({ raw, tokens: countTokens(raw.trim()) });
+    // Split by characters in pieces of at most maxTokens chars (cheap to count),
+    // halving a piece if it still has too many tokens (e.g. CJK, emoji).
+    for (let i = 0; i < w.length; ) {
+      let len = Math.min(maxTokens, w.length - i);
+      let raw = w.slice(i, i + len);
+      let t = countTokens(raw.trim());
+      while (t > maxTokens && len > 1) {
+        len = Math.ceil(len / 2);
+        raw = w.slice(i, i + len);
+        t = countTokens(raw.trim());
+      }
+      words.push({ raw, tokens: t });
+      i += len;
     }
   }
   /** @type {Unit[]} */

@@ -1,7 +1,7 @@
 {
   "name": "veridoc",
   "version": "0.1.0",
-  "description": "Open-source RAG engine backend. Every answer, traced to its source.",
+  "description": "Open-source RAG engine. Every answer, traced to its source.",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -14,13 +14,17 @@
     "start": "node src/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check": "node --env-file=.env scripts/check.js",
     "db:setup": "node --env-file=.env scripts/setup-indexes.js",
     "ingest": "node --env-file=.env scripts/ingest-cli.js",
-    "check": "node --env-file=.env scripts/check.js"
+    "veridoc": "node scripts/veridoc.js",
+    "eval": "node --env-file=.env scripts/eval.js",
+    "smoke": "bash scripts/smoke-test.sh"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.6",
     "@hono/zod-validator": "^0.9.1",
+    "@vercel/blob": "^2.9.0",
     "hono": "^4.13.17",
     "js-tiktoken": "^1.0.21",
     "mammoth": "^1.13.0",
@@ -30,5 +34,8 @@
   },
   "devDependencies": {
     "vitest": "^5.1.0"
+  },
+  "bin": {
+    "veridoc": "scripts/veridoc.js"
   }
 }

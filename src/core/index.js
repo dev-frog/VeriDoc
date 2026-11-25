@@ -9,3 +9,10 @@ export { mimeTypeForFileName, SUPPORTED_EXTENSIONS, MIME } from './ingest/file-t
 export { createFileFetcher, isAllowedSourceUrl } from './ingest/fetch-file.js';
 
 export { createEmbedder, createOpenAIEmbedder, createVoyageEmbedder } from './embed/index.js';
+
+export { createReranker, createApiReranker, createNoopReranker, DEFAULT_RERANK_MODELS } from './rerank/index.js';
+export { createLlm, createChatClient } from './llm/index.js';
+export { createOcr, createChatOcr, needsOcr } from './ocr/index.js';
+export { createSearchService } from './search/service.js';
+export { createAnswerService, buildMessages } from './answer/service.js';
+export { verifyCitations, extractCitations, NO_ANSWER } from './answer/citations.js';

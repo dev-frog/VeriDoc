@@ -1,0 +1,12 @@
+// Example dataset: questions about VeriDoc's own docs. Try it with:
+//   pnpm ingest ./docs   then   pnpm eval            (add --answers to check citations too)
+// One JSON object per line. "files": [] marks a question the documents can't answer.
+{"question": "Which HTTP header carries the VeriDoc API key?", "files": ["API.md"], "answerContains": ["Authorization"]}
+{"question": "What status code is returned for an unsupported file type?", "files": ["API.md"], "answerContains": ["415"]}
+{"question": "What is the maximum limit when listing documents?", "files": ["API.md"], "answerContains": ["100"]}
+{"question": "What happens on the first call to the process endpoint?", "files": ["API.md"], "answerContains": ["download"]}
+{"question": "How do I run a single test file?", "files": ["TESTING.md"], "answerContains": ["vitest"]}
+{"question": "What does the smoke test script need to run?", "files": ["TESTING.md"], "answerContains": ["curl"]}
+{"question": "Why would the health endpoint return 503?", "files": ["API.md", "TESTING.md"], "answerContains": ["MongoDB"]}
+{"question": "What should I do when /process returns 502 provider_error?", "files": ["API.md", "TESTING.md"]}
+{"question": "What is the capital of France?", "files": []}

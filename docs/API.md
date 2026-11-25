@@ -19,13 +19,16 @@ Version `0.1.0` · [← Back to README](../README.md) · [Testing guide →](TES
   - [`GET /documents`](#get-documents)
   - [`GET /documents/:id`](#get-documentsid)
   - [`DELETE /documents/:id`](#delete-documentsid)
+  - [`POST /search`](#post-search)
+  - [`POST /ask`](#post-ask)
+  - [`POST /uploads`](#post-uploads)
 - [End-to-end example](#end-to-end-example)
 
 ---
 
 ## Authentication
 
-Every `/documents` route needs the API key you set in `VERIDOC_API_KEY`:
+Every route except `GET /health` needs the API key you set in `VERIDOC_API_KEY`:
 
 ```http
 Authorization: Bearer <VERIDOC_API_KEY>
@@ -81,8 +84,8 @@ Errors that may succeed if you try again also carry `"retryable": true`. Unhandl
 | `unsupported_type` | 415 | `fileName` extension isn't `.pdf`, `.md`, `.markdown`, `.txt` or `.docx` | Use a supported file |
 | `parse_failed` | 422 | The file couldn't be parsed | Usually the document is marked `failed` instead — see `/process` |
 | `fetch_failed` | 502 | The file download failed with a network error, timeout, 408, 429 or 5xx (`retryable`) | Call `/process` again later |
-| `provider_error` | 502 | The embedding API failed (`retryable` when it's a rate limit or 5xx) | Call `/process` again later |
-| `config_error` | 500 | A provider key the request needs isn't configured (e.g. `EMBED_API_KEY`) | Set the variable and redeploy |
+| `provider_error` | 502 | An AI provider (embeddings, reranker, LLM, OCR) failed. `retryable` when it's a rate limit or 5xx. If a quota resets far in the future (e.g. a daily free-tier limit), the message says when | Retry later |
+| `config_error` | 500 | A provider setting the request needs isn't configured (e.g. `EMBED_API_KEY`, `LLM_MODEL`, `RERANK_API_KEY`, `OCR_API_KEY`, `BLOB_READ_WRITE_TOKEN`) | Set the variable and redeploy |
 | `server_misconfigured` | 500 | `VERIDOC_API_KEY` missing in production | Set it and redeploy |
 | `internal_error` | 500 | Unexpected bug | Report it with the `requestId` |
 
@@ -229,7 +232,7 @@ curl -s -X POST http://localhost:3000/documents/$ID/process \
   "status": "failed",
   "processed": 0,
   "total": 0,
-  "error": "No extractable text found (scanned PDFs need OCR, which is not supported)"
+  "error": "No extractable text found: this looks like a scanned PDF. Set OCR_PROVIDER to enable OCR"
 }
 ```
 
@@ -343,6 +346,163 @@ curl -s -X DELETE http://localhost:3000/documents/$ID -H "Authorization: Bearer 
 
 ---
 
+## `POST /search`
+
+Hybrid search over every `ready` document: the query is embedded and run through Atlas Vector Search **and** BM25 full-text search, the two rankings are fused with `$rankFusion` (reciprocal rank fusion), and the top `topK` candidates are reranked down to `topN`.
+
+**Body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `query` | string | 1–2000 characters |
+| `documentIds` | string[] | Optional. Only search these documents (1–100 ids) |
+| `topK` | integer | Optional, 1–200. Candidates before reranking. Default `TOP_K` (30) |
+| `topN` | integer | Optional, 1–50. Results returned. Default `TOP_N` (5), never more than `topK` |
+
+```bash
+curl -s -X POST http://localhost:3000/search \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"query":"refund window","topN":3}'
+```
+
+**200 OK**
+
+```json
+{
+  "query": "refund window",
+  "results": [
+    {
+      "rank": 1,
+      "chunkId": "6750c3f1a2b4c5d6e7f80a01",
+      "documentId": "6750c3f1a2b4c5d6e7f80912",
+      "fileName": "policy.pdf",
+      "page": 2,
+      "heading": null,
+      "text": "Customers can request a refund within 30 days of purchase…",
+      "score": 0.91
+    }
+  ],
+  "reranker": "cohere/rerank-v3.5",
+  "candidates": 30
+}
+```
+
+- `score` is the reranker's relevance score. With `RERANK_PROVIDER=none` it's the fused RRF score (small numbers like `0.03`; only the order matters).
+- `candidates` is how many chunks came back from the fused search before reranking. `results` is empty when nothing matches.
+
+**Cost per call:** 1 embedding request, plus 1 rerank request unless `RERANK_PROVIDER=none`.
+
+**Errors:** `400 invalid_request` (empty or too-long query, bad `documentIds`, out-of-range `topK`/`topN`), `502 provider_error`, `500 config_error`.
+
+---
+
+## `POST /ask`
+
+Answers a question from your documents. It runs the same search as [`POST /search`](#post-search), gives the top results to the LLM as numbered sources, and requires a `[Source N]` citation on every factual sentence. Then it **verifies** the answer:
+
+1. every cited number must be a source that was actually retrieved;
+2. every factual sentence must cite something;
+3. each cited sentence must share enough content words with a source it cites (a quick lexical check that catches citations pointing at the wrong chunk).
+
+If retrieval finds nothing, the LLM is **not called** and you get the "couldn't find" answer straight away.
+
+**Body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `question` | string | 1–2000 characters |
+| `documentIds` | string[] | Optional. Only use these documents |
+| `topK`, `topN` | integer | Optional, as in `/search`. `topN` = number of sources given to the LLM |
+
+```bash
+curl -s -X POST http://localhost:3000/ask \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"question":"How long do customers have to request a refund?"}'
+```
+
+**200 OK**
+
+```json
+{
+  "question": "How long do customers have to request a refund?",
+  "answer": "Customers can request a refund within 30 days of purchase [Source 1].",
+  "citations": [
+    {
+      "n": 1,
+      "chunkId": "6750c3f1a2b4c5d6e7f80a01",
+      "documentId": "6750c3f1a2b4c5d6e7f80912",
+      "fileName": "policy.pdf",
+      "page": 2,
+      "heading": null,
+      "label": "policy.pdf · page 2",
+      "snippet": "Customers can request a refund within 30 days of purchase…"
+    }
+  ],
+  "sources": [
+    { "n": 1, "chunkId": "…", "documentId": "…", "fileName": "policy.pdf", "page": 2, "heading": null, "text": "…", "score": 0.91 }
+  ],
+  "verification": {
+    "status": "verified",
+    "citedSources": [1],
+    "invalidCitations": [],
+    "uncitedSentences": 0,
+    "unsupportedSentences": 0,
+    "sentences": [
+      { "text": "Customers can request a refund within 30 days of purchase [Source 1].", "citations": [1], "support": 0.86, "supported": true }
+    ]
+  },
+  "model": "openrouter/free",
+  "usage": { "prompt_tokens": 812, "completion_tokens": 21, "total_tokens": 833 }
+}
+```
+
+- `citations` lists only the valid sources the answer actually cites, in order. `sources` is everything the LLM was given.
+- `sentences[].support` is the share of the sentence's content words found in its best cited source (0–1). A sentence counts as supported at 0.35 or more.
+
+**`verification.status`**
+
+| Status | Meaning |
+|---|---|
+| `verified` | Every factual sentence cites a retrieved source that supports it |
+| `partial` | Some sentences are uncited, unsupported, or cite a source number that wasn't retrieved. Check `sentences` |
+| `unverified` | The answer doesn't cite any valid source |
+| `no_answer` | The model said the documents don't contain the answer |
+| `no_sources` | Search found nothing, so the LLM wasn't called |
+
+Show `partial` and `unverified` answers with a warning, or not at all, depending on how strict your app needs to be.
+
+**Cost per call:** 1 embedding request, 1 rerank request (unless `none`), 1 LLM request (unless `no_sources`).
+
+**Errors:** as `/search`, plus `502 provider_error` and `500 config_error` (`LLM_API_KEY` / `LLM_MODEL`) from the LLM.
+
+---
+
+## `POST /uploads`
+
+Token route for **browser uploads straight to Vercel Blob**, for files bigger than Vercel's 4.5 MB request limit. Use it as `handleUploadUrl` for `upload()` from `@vercel/blob/client`. You don't call it by hand.
+
+- Needs the API key (pass it through `upload()`'s `headers` option) and `BLOB_READ_WRITE_TOKEN` on the server.
+- Only issues tokens for supported extensions (`.pdf`, `.md`, `.markdown`, `.txt`, `.docx`), up to `MAX_FILE_MB`, with a random suffix added to the file name.
+- Only `blob.generate-client-token` requests are accepted (no upload-completed callback is registered).
+- The Blob store must be **public**, because VeriDoc downloads files from the blob URL.
+
+```js
+import { upload } from '@vercel/blob/client';
+
+const blob = await upload(file.name, file, {
+  access: 'public',
+  handleUploadUrl: `${VERIDOC_URL}/uploads`,
+  headers: { authorization: `Bearer ${apiKey}` },
+});
+// then: POST /documents { url: blob.url, fileName: file.name } and call /process until ready
+```
+
+From a terminal, `pnpm veridoc upload <file>` does all of this in one step.
+
+**Errors:** `401 unauthorized`, `400 invalid_request` (unsupported file type, wrong request type), `500 config_error` (`BLOB_READ_WRITE_TOKEN` not set).
+
+---
+
 ## End-to-end example
 
 ```bash
@@ -359,6 +519,12 @@ echo "Created $ID"
 # Process until finished
 until curl -s -X POST $BASE/documents/$ID/process -H "Authorization: Bearer $KEY" \
   | tee /dev/stderr | grep -qE '"status":"(ready|failed)"'; do sleep 1; done
+
+# Search and ask
+curl -s -X POST $BASE/search -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "{\"query\":\"supported runtimes\",\"documentIds\":[\"$ID\"]}"
+curl -s -X POST $BASE/ask -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "{\"question\":\"Which runtimes does Hono support?\",\"documentIds\":[\"$ID\"]}"
 
 # Inspect, list, delete
 curl -s $BASE/documents/$ID -H "Authorization: Bearer $KEY"

@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md) · [API reference](API.md)
 
-There are five ways to test VeriDoc. They go from fast and offline to real and end to end:
+There are six ways to test VeriDoc. They go from fast and offline to real and end to end:
 
 | # | Method | Needs | Time |
 |---|---|---|---|
@@ -10,7 +10,8 @@ There are five ways to test VeriDoc. They go from fast and offline to real and e
 | 2 | [Config & connectivity check](#2-config--connectivity-check) — `pnpm check` | `.env` with real credentials | ~10 s |
 | 3 | [Smoke test script](#3-smoke-test-script) — `scripts/smoke-test.sh` | A running server | ~30 s |
 | 4 | [Manual requests](#4-manual-requests-curl-rest-client-postman) — curl, REST Client, Postman | A running server | as long as you like |
-| 5 | [Real file types](#5-testing-pdf-docx-and-other-real-files) — PDF, DOCX, folders | A running server or `pnpm ingest` | minutes |
+| 5 | [Real file types](#5-testing-pdf-docx-and-other-real-files) — PDF, DOCX, scans, folders | A running server or `pnpm ingest` | minutes |
+| 6 | [Answer quality](#6-answer-quality-pnpm-eval) — `pnpm eval` | Ingested documents + a question set | ~1 s per question |
 
 ---
 
@@ -36,6 +37,13 @@ The suite runs **fully offline**. The API tests build the real Hono app with an 
 | `tests/indexes.test.js` | Atlas index definitions |
 | `tests/logger.test.js` | Pretty / JSON request logs, levels by status |
 | `tests/diagnostics.test.js` | `pnpm check` config diagnostics |
+| `tests/search-answer.test.js` | Hybrid search service (ready-only, document filter, reranking) and the answer service end to end with a fake LLM |
+| `tests/citations.test.js` | `[Source N]` parsing, sentence splitting, support scores, every verification status |
+| `tests/query-api.test.js` | `POST /search`, `/ask` and `/uploads`: auth, validation, error mapping, Blob token rules |
+| `tests/providers.test.js` | Rerankers (Cohere, Voyage, Jina, OpenRouter gateway), LLM client, OCR request and page parsing |
+| `tests/search-pipeline.test.js` | The `$rankFusion` aggregation pipeline sent to Atlas |
+| `tests/eval-metrics.test.js` | Dataset parsing and eval metrics (hit@k, MRR, refusals) |
+| `tests/cli-format.test.js` | `veridoc` CLI output |
 
 Run a single file or test:
 
@@ -79,7 +87,7 @@ Each live check sends one tiny request (a few tokens) and prints ✓ / ! / ✗ w
 
 ## 3. Smoke test script
 
-`scripts/smoke-test.sh` exercises the whole API against a **running** server: health, auth, validation errors, then it ingests a real document to `ready`, reads it, lists it and deletes it. It needs only `bash` and `curl`.
+`scripts/smoke-test.sh` (or `pnpm smoke`) exercises the whole API against a **running** server: health, auth, validation errors, then it ingests a real document to `ready`, reads it, lists it, searches it, asks a question about it and deletes it. It needs only `bash` and `curl`.
 
 ```bash
 # terminal 1
@@ -98,6 +106,7 @@ VeriDoc smoke test → http://localhost:3000
 ✓ unknown route → 404 not_found (JSON)
 ✓ no API key → 401
 ✓ wrong API key → 401
+✓ POST /search without key → 401
 ✓ http:// url → 400 invalid_request
 ✓ missing fileName → 400 invalid_request
 ✓ unsupported extension → 415
@@ -105,6 +114,8 @@ VeriDoc smoke test → http://localhost:3000
 ✓ limit=500 → 400 invalid_request
 ✓ unknown document id → 404
 ✓ malformed document id → 404
+✓ empty search query → 400
+✓ bad documentIds on /ask → 400
 ✓ POST /documents → 202 pending
     process #1 → processing 64/200
     process #2 → ready 200/200
@@ -112,10 +123,13 @@ VeriDoc smoke test → http://localhost:3000
 ✓ calling /process again is a no-op
 ✓ GET /documents/:id
 ✓ GET /documents?limit=1 (list + nextCursor)
+✓ POST /search finds the document
+✓ POST /ask answers with a verification status
+    verification: verified
 ✓ DELETE /documents/:id
 ✓ deleted document → 404
 
-All 18 checks passed.
+All 23 checks passed.
 ```
 
 | Variable | Default | Notes |
@@ -125,10 +139,12 @@ All 18 checks passed.
 | `DOC_URL` | Hono's README on GitHub | Any https file the server is allowed to download |
 | `DOC_NAME` | `hono-readme.md` | Its extension picks the parser |
 | `MAX_POLLS` | `120` | Max `/process` calls before giving up |
+| `QUESTION` | a question about Hono | Used for `/search` and `/ask`; change it when you change `DOC_URL` |
+| `SKIP_ASK` | | Set to `1` to skip `/ask` (saves an LLM call) |
 
 The default `DOC_URL` is on `raw.githubusercontent.com`, so the server must allow that host. For local testing, put `SOURCE_URL_HOSTS=*` in `.env` (or `SOURCE_URL_HOSTS=raw.githubusercontent.com,*.public.blob.vercel-storage.com`). The script exits non-zero when any check fails, so you can use it in CI or after a deploy.
 
-> The ingestion step makes real embedding calls, so it uses a small amount of your provider quota.
+> The script makes real provider calls: embeddings for ingestion, then one embedding, one rerank and one LLM call for search/ask. On OpenRouter's free tier that's a handful of your daily requests.
 
 ---
 
@@ -154,6 +170,19 @@ curl -s -X DELETE $BASE/documents/$ID -H "Authorization: Bearer $KEY"
 ```
 
 Add `-i` to see status codes and the `X-Request-Id` header. Pipe into `jq` for pretty output.
+
+### The `veridoc` CLI
+
+```bash
+pnpm veridoc add https://raw.githubusercontent.com/honojs/hono/main/README.md
+pnpm veridoc search "supported runtimes" --top 3
+pnpm veridoc ask "Which runtimes does Hono support?"
+pnpm veridoc ask "..." --json          # full response, including verification.sentences
+pnpm veridoc docs
+pnpm veridoc rm <id>
+```
+
+It reads `VERIDOC_URL` and `VERIDOC_API_KEY` from the environment or `.env`.
 
 ### VS Code REST Client / JetBrains HTTP Client
 
@@ -193,13 +222,48 @@ DOC_URL=https://abc.public.blob.vercel-storage.com/manual.pdf DOC_NAME=manual.pd
 | File | Expect |
 |---|---|
 | Text-based PDF | `pageCount` set, `status: ready` |
-| Scanned PDF (images only) | `status: failed`, `error` mentions OCR — expected, OCR isn't supported yet |
+| Scanned PDF (images only), OCR off | `status: failed`, `error` says to set `OCR_PROVIDER` |
+| Scanned PDF, OCR on | `status: ready`, chunks have page numbers from the OCR page markers |
 | Markdown with `#` headings | `status: ready`; chunks carry the heading path |
 | DOCX | Headings detected only from Word's built-in **Heading 1–6** styles |
 | `.png`, `.xlsx`, … | `415 unsupported_type` at creation |
 | File bigger than `MAX_FILE_MB` | `status: failed` on the first `/process` |
 
 To look at the chunks themselves, open the `chunks` collection in MongoDB Atlas (Data Explorer or Compass) and filter by `{ docId: ObjectId("<id>") }`.
+
+---
+
+## 6. Answer quality (`pnpm eval`)
+
+Tests check that the code works. `pnpm eval` checks that **answers are good** on your documents: it runs a labelled question set and scores retrieval and answers.
+
+```bash
+pnpm ingest ./docs                       # the example set asks about VeriDoc's own docs
+pnpm eval                                # eval/dataset.example.jsonl, retrieval only
+pnpm eval --answers                      # also ask the LLM and verify citations
+pnpm eval my-set.jsonl --answers --json report.json
+pnpm eval --api                          # evaluate a running server (VERIDOC_URL) instead
+pnpm eval --limit 5 --delay 3000         # stay under free-tier rate limits
+```
+
+Example output:
+
+```
+✓ Which HTTP header carries the VeriDoc API key?
+   relevant at #1 · answer verified
+~ What does the smoke test script need to run?
+   relevant at #3 · answer verified
+✓ What is the capital of France?
+   unanswerable → no_answer
+
+Retrieval (8 answerable question(s), k = TOP_N)
+  hit@1         75%
+  hit@k        100%
+  MRR          0.854
+  file recall  100%
+```
+
+`✓` = the expected document ranked first, `~` = found but lower, `✗` = not retrieved. Write your own dataset with one JSON object per line: `question`, `files` (documents that contain the answer, or `[]` if none do), and optionally `pages` and `answerContains`. Run it before and after changing `CHUNK_TOKENS`, `TOP_K`, the reranker or the model to see what actually helped.
 
 ---
 
@@ -228,4 +292,8 @@ If something fails, take the `X-Request-Id` from the response and search for it 
 | Document stuck in `processing` | Nobody is calling `/process` | `/process` only does work when called — keep calling it until `ready` |
 | `401` even with a key | Missing `Bearer ` prefix, or the server has a different `VERIDOC_API_KEY` | Send `Authorization: Bearer <key>`; redeploy after changing env vars on Vercel |
 | Startup error `OPENAI_API_KEY: was renamed, use EMBED_API_KEY` | `.env` or Vercel still uses an old variable name | Rename it as the message says |
+| `/ask` → `500 config_error` "LLM_MODEL is not set" or `LLM_MODEL … isn't an OpenRouter model id` in `pnpm check` | No model configured, or an OpenAI-style name on OpenRouter | Set `LLM_MODEL`, e.g. `openrouter/free` |
+| `/ask` answers are `partial` | The model cited a wrong or non-existent source, or skipped citations | Check `verification.sentences`; try a stronger model or a lower `TOP_N` |
+| `/search` returns nothing for documents that are `ready` | Search indexes missing or still building, or `EMBED_DIMENSIONS` doesn't match the index | Run `pnpm check`; `pnpm db:setup` (or `--update`) |
+| `502 provider_error … rate limit resets at …` | A daily free-tier quota is used up | Wait for the reset time, or add credits; VeriDoc stops retrying so it doesn't waste more requests |
 | `pnpm start` fails on missing env vars | `start` doesn't load `.env` | Use `pnpm dev`, or `node --env-file=.env src/server.js` |

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchWithRetry, parseRetryAfter, toBatches } from '../src/core/embed/http.js';
+import { fetchWithRetry, parseRetryAfter, parseRateLimitReset, postJson, toBatches } from '../src/core/embed/http.js';
 import { createOpenAIEmbedder, openAIAuthHeaders } from '../src/core/embed/openai.js';
 import { createVoyageEmbedder } from '../src/core/embed/voyage.js';
 import { createEmbedder } from '../src/core/embed/index.js';
@@ -62,6 +62,32 @@ describe('fetchWithRetry', () => {
     const fetch = fakeFetch(json({}, 429, { 'retry-after': '2' }), json({}, 429, { 'retry-after': '120' }), json({}));
     await fetchWithRetry('u', {}, { fetch, sleep, maxDelayMs: 10_000 });
     expect(sleep.mock.calls.map((c) => c[0])).toEqual([2000, 10_000]);
+  });
+
+  it('does not retry a 429 whose quota resets far in the future (e.g. daily free tier)', async () => {
+    const reset = String(Date.now() + 6 * 3600_000); // ms epoch, like OpenRouter
+    const fetch = fakeFetch(json({ error: { message: 'Rate limit exceeded: free-models-per-day' } }, 429, { 'x-ratelimit-reset': reset }));
+    const res = await fetchWithRetry('u', {}, { fetch, ...noSleep });
+    expect(res.status).toBe(429);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retries a 429 that resets soon (per-minute limit)', async () => {
+    const reset = String(Math.floor((Date.now() + 20_000) / 1000)); // seconds epoch
+    const fetch = fakeFetch(json({}, 429, { 'x-ratelimit-reset': reset }), json({ ok: true }));
+    expect((await fetchWithRetry('u', {}, { fetch, ...noSleep })).status).toBe(200);
+  });
+
+  it('postJson mentions when a long rate limit resets', async () => {
+    const reset = String(Date.now() + 6 * 3600_000);
+    const fetch = fakeFetch(json({ error: { message: 'Rate limit exceeded' } }, 429, { 'x-ratelimit-reset': reset }));
+    await expect(postJson('LLM', 'u', {}, {}, { fetch, ...noSleep })).rejects.toThrow(/HTTP 429: Rate limit exceeded \(rate limit resets at 20/);
+  });
+
+  it('parseRateLimitReset accepts epoch seconds and milliseconds', () => {
+    expect(parseRateLimitReset('100', 40_000)).toBe(60_000);
+    expect(parseRateLimitReset(String(1e12 + 5000), 1e12)).toBe(5000);
+    expect(parseRateLimitReset('x')).toBeNull();
   });
 
   it('parseRetryAfter handles seconds and HTTP dates', () => {

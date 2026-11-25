@@ -2,6 +2,8 @@ import { CoreError, ErrorCodes } from '../errors.js';
 import { mimeTypeForFileName, SUPPORTED_EXTENSIONS } from './file-types.js';
 import { parseDocument } from './parsers/index.js';
 import { chunkSections } from './chunker.js';
+import { MIME } from './file-types.js';
+import { needsOcr } from '../ocr/index.js';
 
 /**
  * Storage the ingest service needs. src/db/ingest-repo.js implements it
@@ -64,6 +66,7 @@ export function embeddingInput(chunk) {
  * @param {import('./chunker.js').ChunkOptions} [deps.chunkOptions]
  * @param {number} [deps.batchSize=256]  chunks embedded per processNext call
  * @param {(url: string) => boolean} [deps.isSourceUrlAllowed]
+ * @param {import('../ocr/index.js').Ocr | null} [deps.ocr]  OCR for PDFs without a text layer; null = disabled
  * @param {() => Date} [deps.now]
  */
 export function createIngestService({
@@ -73,6 +76,7 @@ export function createIngestService({
   chunkOptions = {},
   batchSize = 256,
   isSourceUrlAllowed = () => true,
+  ocr = null,
   now = () => new Date(),
 }) {
   /** @param {string} id */
@@ -110,14 +114,22 @@ export function createIngestService({
     let pageCount;
     try {
       const data = await fetchFile(doc.sourceUrl);
-      const sections = await parseDocument(data, doc.mimeType);
+      let sections = await parseDocument(data, doc.mimeType);
+      if (ocr && doc.mimeType === MIME.pdf && needsOcr(sections)) {
+        const pdfPages = Math.max(sections.length, 1); // parsePdf returns one section per page
+        sections = (await ocr.ocrPdf(data, doc.fileName)).filter((s) => s.page === null || s.page <= pdfPages);
+      }
       const pages = sections.map((s) => s.page).filter((p) => p !== null);
       pageCount = pages.length ? Math.max(...pages) : null;
       drafts = chunkSections(sections, chunkOptions);
       if (drafts.length === 0) {
         throw new CoreError(
           ErrorCodes.PARSE_FAILED,
-          'No extractable text found (scanned PDFs need OCR, which is not supported)',
+          doc.mimeType !== MIME.pdf
+            ? 'No extractable text found'
+            : ocr
+              ? 'No text found in this PDF, even with OCR'
+              : 'No extractable text found: this looks like a scanned PDF. Set OCR_PROVIDER to enable OCR',
         );
       }
     } catch (err) {

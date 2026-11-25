@@ -34,14 +34,15 @@ export function diagnoseConfig(c) {
   const add = (level, area, message, fix) => out.push({ level, area, message, ...(fix && { fix }) });
 
   // --- secrets that are obviously not secrets
-  for (const name of ['EMBED_API_KEY', 'RERANK_API_KEY', 'LLM_API_KEY', 'VERIDOC_API_KEY']) {
+  for (const name of ['EMBED_API_KEY', 'RERANK_API_KEY', 'LLM_API_KEY', 'OCR_API_KEY', 'VERIDOC_API_KEY']) {
     if (looksLikeUrl(c[name])) add('error', name, `${name} contains a URL, not a key`, `Put the API key in ${name}; URLs belong in *_BASE_URL`);
   }
 
   // --- base URLs
-  for (const [name, area] of [['EMBED_BASE_URL', 'embeddings'], ['LLM_BASE_URL', 'llm']]) {
+  for (const [name, area] of [['EMBED_BASE_URL', 'embeddings'], ['LLM_BASE_URL', 'llm'], ['OCR_BASE_URL', 'ocr']]) {
     const url = c[name];
     if (area === 'embeddings' && c.EMBED_PROVIDER !== 'openai-compatible') continue;
+    if (area === 'ocr' && c.OCR_PROVIDER === 'none') continue;
     if (isAzureHost(url) && !/\/openai\/v1\/?$/.test(new URL(url).pathname)) {
       add('error', area, `${name} is an Azure host without the /openai/v1 path (requests will 404)`, `${name}=${url.replace(/\/+$/, '')}/openai/v1`);
     }
@@ -65,6 +66,17 @@ export function diagnoseConfig(c) {
 
   // --- LLM
   if (!c.LLM_API_KEY) add('error', 'llm', 'LLM_API_KEY is empty', 'Set LLM_API_KEY');
+  if (/openrouter\.ai/.test(c.LLM_BASE_URL) && !c.LLM_MODEL.includes('/')) {
+    add('error', 'llm', `LLM_MODEL=${c.LLM_MODEL} isn't an OpenRouter model id (they look like vendor/model)`, 'LLM_MODEL=openrouter/free (or e.g. openai/gpt-4o-mini)');
+  }
+
+  // --- OCR
+  if (c.OCR_PROVIDER === 'none') {
+    add('warn', 'ocr', 'OCR is off: scanned PDFs (no text layer) will fail to ingest', 'Set OCR_PROVIDER=openai-compatible, OCR_API_KEY and OCR_MODEL to enable it');
+  } else {
+    if (!c.OCR_API_KEY) add('error', 'ocr', 'OCR_PROVIDER is set but OCR_API_KEY is empty', 'Set OCR_API_KEY');
+    if (!c.OCR_MODEL) add('error', 'ocr', 'OCR_PROVIDER is set but OCR_MODEL is empty', 'Set OCR_MODEL to a model that accepts PDF/file input');
+  }
 
   // --- app
   if (!c.VERIDOC_API_KEY) {

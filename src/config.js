@@ -39,13 +39,27 @@ const EnvSchema = z
       z.enum(['cohere', 'voyage', 'jina', 'none']).default('cohere'),
     ),
     RERANK_API_KEY: optionalString,
-    /** Empty = the provider's default model (see DEFAULT_RERANK_MODELS). */
+    /** Empty = the provider's default model (see src/core/rerank). */
     RERANK_MODEL: optionalString,
+    /** Empty = the provider's own API. Set to use a compatible gateway, e.g. https://openrouter.ai/api/v1 */
+    RERANK_BASE_URL: z.preprocess(blankToUndefined, z.url().optional()),
 
     // LLM: any OpenAI-compatible /chat/completions API
     LLM_BASE_URL: z.preprocess(blankToUndefined, z.url().default('https://api.openai.com/v1')),
     LLM_API_KEY: optionalString,
     LLM_MODEL: str('gpt-4o-mini'),
+    /** Empty = the model's default. Some models (e.g. reasoning models) only accept their default. */
+    LLM_TEMPERATURE: z.preprocess(blankToUndefined, z.coerce.number().min(0).max(2).optional()),
+    LLM_MAX_TOKENS: int(1024),
+
+    // OCR for scanned PDFs (PDFs without a text layer). none = disabled.
+    // openai-compatible: sends the PDF to a vision/file-capable chat model.
+    OCR_PROVIDER: z.preprocess(blankToUndefined, z.enum(['none', 'openai-compatible']).default('none')),
+    OCR_BASE_URL: z.preprocess(blankToUndefined, z.url().default('https://openrouter.ai/api/v1')),
+    OCR_API_KEY: optionalString,
+    OCR_MODEL: optionalString,
+    /** Optional OpenRouter PDF engine: mistral-ocr | cloudflare-ai | native. Empty = provider default. */
+    OCR_PDF_ENGINE: optionalString,
 
     // App
     /** Request logs: pretty (readable), json (one JSON object per line) or off. Default depends on NODE_ENV. */
@@ -76,13 +90,6 @@ const EnvSchema = z
 /**
  * @typedef {z.infer<typeof EnvSchema>} Config
  */
-
-/** Default rerank model per provider, used when RERANK_MODEL is empty. */
-export const DEFAULT_RERANK_MODELS = Object.freeze({
-  cohere: 'rerank-v3.5',
-  voyage: 'rerank-2.5',
-  jina: 'jina-reranker-v2-base-multilingual',
-});
 
 /** Old provider-specific names and what replaced them. Setting one is a config error. */
 export const RENAMED_ENV = Object.freeze({

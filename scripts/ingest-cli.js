@@ -12,8 +12,8 @@ import { join, resolve, relative } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { getConfig, ConfigError } from '../src/config.js';
 import { closeClient } from '../src/db/client.js';
-import { createMongoIngestRepo } from '../src/db/ingest-repo.js';
-import { createIngestService, createEmbedder, mimeTypeForFileName, CoreError } from '../src/core/index.js';
+import { createServices } from '../src/services.js';
+import { mimeTypeForFileName, CoreError } from '../src/core/index.js';
 
 const args = process.argv.slice(2);
 const force = args.includes('--force');
@@ -45,14 +45,7 @@ async function main() {
   if (!(await stat(root)).isDirectory()) throw new Error(`${root} is not a directory`);
 
   const config = getConfig();
-  const repo = createMongoIngestRepo();
-  const ingest = createIngestService({
-    repo,
-    embedder: createEmbedder(config),
-    fetchFile: readLocalFile,
-    chunkOptions: { maxTokens: config.CHUNK_TOKENS, overlap: config.CHUNK_OVERLAP },
-    batchSize: config.INGEST_BATCH_SIZE,
-  });
+  const { ingest, ingestRepo: repo } = createServices(config, { fetchFile: readLocalFile, allowAnySource: true });
 
   const totals = { ready: 0, failed: 0, skipped: 0 };
   for await (const path of walk(root)) {

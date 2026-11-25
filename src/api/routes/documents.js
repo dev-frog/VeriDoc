@@ -1,17 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-
-/**
- * zod-validator hook that answers with our error format.
- * @type {Parameters<typeof zValidator>[2]}
- */
-const onInvalid = (result, c) => {
-  if (!result.success) {
-    const message = result.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ');
-    return c.json({ error: { code: 'invalid_request', message } }, 400);
-  }
-};
+import { onInvalid } from './validation.js';
 
 const CreateBody = z.object({
   url: z.url({ protocol: /^https$/, error: 'must be an https URL' }),

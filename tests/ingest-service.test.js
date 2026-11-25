@@ -13,7 +13,7 @@ const MD = ['# A', '## B', '# C']
   .map((h, i) => `${h}\n${Array.from({ length: 4 }, (_, j) => `Sec${i} s${j} w w w.`).join(' ')}`)
   .join('\n');
 
-function setup({ file = enc(MD), fetchFile, embed, batchSize = 5 } = {}) {
+function setup({ file = enc(MD), fetchFile, embed, batchSize = 5, ocr = null } = {}) {
   const repo = createMemoryRepo();
   const embedder = {
     dimensions: 2,
@@ -25,6 +25,7 @@ function setup({ file = enc(MD), fetchFile, embed, batchSize = 5 } = {}) {
     fetchFile: vi.fn(fetchFile ?? (async () => file)),
     chunkOptions: { maxTokens: 5, overlap: 0, countTokens: words },
     batchSize,
+    ocr,
     now: () => new Date('2026-01-01T00:00:00Z'),
   });
   return { repo, embedder, service };
@@ -133,6 +134,33 @@ describe('processNext', () => {
     const { service } = setup({ file: makePdf(['', '']) });
     const { id } = await service.createDocument({ url: 'https://f/a.pdf', fileName: 'a.pdf' });
     expect(await service.processNext(id)).toMatchObject({ status: 'failed', error: expect.stringMatching(/OCR/) });
+  });
+
+  it('runs OCR on a scanned PDF (no text layer) and keeps page numbers', async () => {
+    const ocr = { name: 'fake', ocrPdf: vi.fn(async () => [{ page: 1, heading: null, text: 'Scanned one.' }, { page: 2, heading: 'H', text: 'Scanned two.' }, { page: 9, heading: null, text: 'Hallucinated page.' }]) };
+    const { service, repo } = setup({ file: makePdf(['', '']), ocr });
+    const { id } = await service.createDocument({ url: 'https://f/scan.pdf', fileName: 'scan.pdf' });
+    expect((await service.processNext(id)).status).toBe('ready');
+    expect(ocr.ocrPdf).toHaveBeenCalledWith(expect.any(Uint8Array), 'scan.pdf');
+    expect([...repo.chunks.values()].map((c) => [c.page, c.text])).toEqual([[1, 'Scanned one.'], [2, 'Scanned two.']]);
+  });
+
+  it('does not run OCR on PDFs that have text, or on other formats', async () => {
+    const ocr = { name: 'fake', ocrPdf: vi.fn() };
+    const { service } = setup({ file: makePdf(['This page has a real paragraph of text, long enough to skip OCR.']), ocr });
+    const { id } = await service.createDocument({ url: 'https://f/a.pdf', fileName: 'a.pdf' });
+    expect((await service.processNext(id)).status).toBe('ready');
+    const md = setup({ ocr });
+    await md.service.processNext((await md.service.createDocument({ url: URL_MD, fileName: 'g.md' })).id);
+    expect(ocr.ocrPdf).not.toHaveBeenCalled();
+  });
+
+  it('keeps the document processing when the OCR provider fails (retryable)', async () => {
+    const ocr = { name: 'fake', ocrPdf: vi.fn(async () => { throw new CoreError('provider_error', 'OCR down', { retryable: true }); }) };
+    const { service, repo } = setup({ file: makePdf(['']), ocr });
+    const { id } = await service.createDocument({ url: 'https://f/scan.pdf', fileName: 'scan.pdf' });
+    await expect(service.processNext(id)).rejects.toMatchObject({ code: 'provider_error' });
+    expect(repo.docs.get(id).status).toBe('processing');
   });
 
   it('marks failed on permanent fetch errors, rethrows retryable ones', async () => {

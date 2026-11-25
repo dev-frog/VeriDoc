@@ -22,13 +22,15 @@ An open-source RAG engine backend. Drop in your PDFs, Markdown, Word and text fi
 Most RAG demos give you an answer and a vague "sources" list. VeriDoc is built around one rule: **if the model can't point to a retrieved chunk, it doesn't get to say it.**
 
 - 🔎 **Hybrid retrieval** — BM25 full-text *and* vector search, fused with MongoDB's `$rankFusion`, then reranked.
-- 🧾 **Verifiable citations** — the LLM must cite every claim as `[Source N]`, and each citation is checked against the chunks that were actually retrieved.
-- 📄 **Real document structure** — chunks keep their page number (PDF) and heading path (`Guide > Install > Linux`) for Markdown and DOCX.
+- 🧾 **Verifiable citations** — the LLM must cite every claim as `[Source N]`, and each answer comes back with a verification report: citations to sources that weren't retrieved, uncited claims, and claims their cited source doesn't support are all flagged.
+- 📄 **Real document structure** — chunks keep their page number (PDF) and heading path (`Guide > Install > Linux`) for Markdown and DOCX. Scanned PDFs are OCR'd.
+- 📏 **Measurable** — `pnpm eval` scores retrieval (hit@k, MRR) and answers (citation verification, refusals) on your own question set.
+- ⌨️ **CLI included** — `veridoc upload`, `veridoc ask "…"`, `veridoc search "…"`.
 - ☁️ **Serverless-native** — stateless Hono API on Vercel. Long jobs are split into small, repeatable batches that fit inside the function time limit.
 - 🔌 **Bring your own providers** — any OpenAI-compatible API (OpenRouter, OpenAI, Azure OpenAI, …) or Voyage for embeddings; Cohere, Voyage or Jina for reranking; any OpenAI-compatible LLM. Works on free models via OpenRouter.
 - 🧱 **Clean core** — the engine in `src/core` has no HTTP code, so you can use it from the API, a CLI or your own app.
 
-> **Status:** 🚧 Early but working. Ingestion (upload → parse → chunk → embed) is done and tested. Hybrid search and cited answers are next. See the [roadmap](#-roadmap).
+> **Status:** v0.1 — the full pipeline works and is covered by 185 offline tests: upload → parse (with OCR) → chunk → embed → hybrid search → rerank → cited, verified answers. See the [roadmap](#-roadmap) for what's next.
 
 ## 🏗️ How it works
 
@@ -44,11 +46,25 @@ Files are uploaded to storage first (Vercel Blob or any allowed https host), and
   <img src="docs/assets/ingestion-flow.svg" alt="Document lifecycle: POST /documents creates a pending document; repeated POST /documents/:id/process calls download, parse, chunk and embed in batches until the document is ready or failed." width="100%" />
 </p>
 
-### Answering (coming next)
+### Answering
 
 <p align="center">
   <img src="docs/assets/hybrid-search.svg" alt="Answer pipeline: the question runs through BM25 and vector search, results are fused with $rankFusion, reranked, and sent to the LLM, which must cite each claim as [Source N]." width="100%" />
 </p>
+
+```bash
+$ pnpm veridoc ask "How long do customers have to request a refund?"
+
+Customers can request a refund within 30 days of purchase [Source 1].
+
+Sources
+  [1] policy.pdf · page 2 · Refunds
+      Customers can request a refund within 30 days of purchase. Refunds are paid…
+
+✓ verified — every claim cites a retrieved source that supports it
+```
+
+If the documents don't contain the answer, the model is told to say so instead of guessing, and when nothing relevant is retrieved the LLM isn't called at all.
 
 ## 🚀 Quick start
 
@@ -89,7 +105,24 @@ until curl -s -X POST localhost:3000/documents/$ID/process -H "Authorization: Be
   | tee /dev/stderr | grep -qE '"status":"(ready|failed)"'; do sleep 1; done
 ```
 
-Or ingest a whole local folder with no API calls at all:
+Then search it and ask questions:
+
+```bash
+curl -s -X POST localhost:3000/ask -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"question":"Which runtimes does Hono support?"}'
+# {"answer":"Hono runs on … [Source 1]","citations":[…],"verification":{"status":"verified",…}}
+```
+
+Or do the same with the CLI (it reads `VERIDOC_URL` and `VERIDOC_API_KEY` from `.env`):
+
+```bash
+pnpm veridoc upload ./handbook.pdf      # upload to Vercel Blob, register, process
+pnpm veridoc ask "What is the refund policy?"
+pnpm veridoc search "refund window" --top 3
+pnpm veridoc docs
+```
+
+Or ingest a whole local folder straight into MongoDB, with no server or uploads:
 
 ```bash
 pnpm ingest ./my-docs
@@ -107,8 +140,11 @@ pnpm ingest ./my-docs
 | `GET` | `/documents` | List documents (newest first, cursor pagination, status filter) |
 | `GET` | `/documents/:id` | Get one document |
 | `DELETE` | `/documents/:id` | Delete a document and all its chunks |
+| `POST` | `/search` | Hybrid search → ranked chunks with file, page and heading |
+| `POST` | `/ask` | Answer with `[Source N]` citations + a verification report |
+| `POST` | `/uploads` | Token route for browser uploads straight to Vercel Blob (files > 4.5 MB) |
 
-All `/documents` routes need `Authorization: Bearer $VERIDOC_API_KEY`. Errors always look like `{ "error": { "code", "message" } }`. Details, examples and every error code are in **[docs/API.md](docs/API.md)**.
+Every route except `/health` needs `Authorization: Bearer $VERIDOC_API_KEY`. Errors always look like `{ "error": { "code", "message" } }`. Details, examples and every error code are in **[docs/API.md](docs/API.md)**.
 
 ## 🧰 Scripts
 
@@ -121,6 +157,9 @@ All `/documents` routes need `Authorization: Bearer $VERIDOC_API_KEY`. Errors al
 | `pnpm check` | Checks config and makes one tiny call to MongoDB, embeddings, reranker and LLM. `--offline` checks config only |
 | `pnpm db:setup` | Creates collections and indexes, then waits for the search indexes. `--update` replaces existing search index definitions |
 | `pnpm ingest <folder>` | Ingests every `.pdf`, `.md`, `.txt`, `.docx` in a folder (recursively). `--force` re-ingests files already done |
+| `pnpm veridoc <cmd>` | CLI for a running server: `upload`, `add`, `ask`, `search`, `docs`, `rm`. `--help` for details |
+| `pnpm eval [dataset.jsonl]` | Scores retrieval (and with `--answers`, citations) against a labelled question set. See [Evaluation](#-evaluation) |
+| `pnpm smoke` | End-to-end check of a running server: auth, validation, ingest, search, ask, delete |
 
 ## ⚙️ Configuration
 
@@ -145,11 +184,20 @@ Older versions used provider-specific names (`OPENAI_API_KEY`, `OPENAI_BASE_URL`
 | `RERANK_PROVIDER` | `cohere` | `cohere`, `voyage`, `jina` or `none` |
 | `RERANK_API_KEY` | | Key for the rerank provider |
 | `RERANK_MODEL` | provider default | `rerank-v3.5` (Cohere), `rerank-2.5` (Voyage), `jina-reranker-v2-base-multilingual` (Jina) |
+| `RERANK_BASE_URL` | provider's API | Use a Cohere-compatible gateway instead, e.g. `https://openrouter.ai/api/v1` with `RERANK_MODEL=cohere/rerank-v3.5` |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible API |
 | `LLM_API_KEY` | | |
-| `LLM_MODEL` | `gpt-4o-mini` | |
+| `LLM_MODEL` | `gpt-4o-mini` | On OpenRouter use `vendor/model` ids, e.g. `openrouter/free` |
+| `LLM_TEMPERATURE` | model default | Leave empty for models that only accept their default |
+| `LLM_MAX_TOKENS` | `1024` | Max answer length |
+| `OCR_PROVIDER` | `none` | `none` or `openai-compatible` (OCR for scanned PDFs, see below) |
+| `OCR_BASE_URL` | `https://openrouter.ai/api/v1` | |
+| `OCR_API_KEY` | | |
+| `OCR_MODEL` | | A model that accepts PDF/file input |
+| `OCR_PDF_ENGINE` | | OpenRouter only: `mistral-ocr`, `cloudflare-ai` or `native` |
 | `VERIDOC_API_KEY` | | Protects VeriDoc's own endpoints. Required in production |
-| `BLOB_READ_WRITE_TOKEN` | | Vercel Blob (added for you when you connect a Blob store) |
+| `BLOB_READ_WRITE_TOKEN` | | Vercel Blob (public store) for `POST /uploads` and `veridoc upload` |
+| `VERIDOC_URL` | `http://localhost:3000` | CLI and `pnpm eval --api` only: which server to talk to |
 | `CHUNK_TOKENS` | `600` | Target chunk size in tokens. Minimum 50 |
 | `CHUNK_OVERLAP` | `0.12` | Fraction from 0 to 0.5 |
 | `TOP_K` | `30` | Candidates retrieved before reranking |
@@ -191,6 +239,50 @@ RERANK_PROVIDER=none
 ```
 
 Free (`:free`) models are rate-limited per request (per minute and per day), so keep batches large. The free embedding endpoint may log inputs, so don't ingest confidential documents with it. After changing `EMBED_DIMENSIONS`, run `pnpm db:setup --update` and re-ingest.
+
+</details>
+
+<details>
+<summary><b>OCR for scanned PDFs</b></summary>
+
+PDFs that are only images (scans, photos of pages) have no text layer. With OCR on, VeriDoc sends those PDFs to a chat model that accepts files and asks for a page-by-page Markdown transcription, so chunks still get page numbers and headings. PDFs that already have text never go to OCR.
+
+```bash
+OCR_PROVIDER=openai-compatible
+OCR_BASE_URL=https://openrouter.ai/api/v1
+OCR_API_KEY=<openrouter key>
+OCR_MODEL=<model id>                    # any vision model that reads PDFs; see openrouter.ai/models
+OCR_PDF_ENGINE=mistral-ocr              # optional: OpenRouter's dedicated OCR engine (paid per page)
+```
+
+The whole PDF goes in one request, which has to finish within the function time limit, so very long scans are better ingested locally with `pnpm ingest`.
+
+</details>
+
+<details>
+<summary><b>Uploading files (Vercel Blob)</b></summary>
+
+Vercel functions accept request bodies up to 4.5 MB, so files are uploaded to a **public** Vercel Blob store and VeriDoc downloads them from there.
+
+- **CLI:** `pnpm veridoc upload ./file.pdf` uploads with `BLOB_READ_WRITE_TOKEN`, registers the document and processes it.
+- **Browser:** use `POST /uploads` as the `handleUploadUrl` for `upload()` from `@vercel/blob/client`. It checks the API key, allows only supported file types up to `MAX_FILE_MB`, and adds a random suffix to the name:
+
+```js
+import { upload } from '@vercel/blob/client';
+
+const blob = await upload(file.name, file, {
+  access: 'public',
+  handleUploadUrl: 'https://<your-veridoc>/uploads',
+  headers: { authorization: `Bearer ${apiKey}` },
+});
+await fetch('https://<your-veridoc>/documents', {
+  method: 'POST',
+  headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+  body: JSON.stringify({ url: blob.url, fileName: file.name }),
+});
+```
+
+Don't put the API key in a public web page: call these from your own backend, or from an internal tool.
 
 </details>
 
@@ -271,13 +363,24 @@ Env vars only apply to deployments made after you set them — redeploy after ch
 ```
 veridoc/
 ├── src/
-│   ├── core/          # the engine: ingest (fetch, parsers, chunker), embed providers, errors
+│   ├── core/          # the engine — no HTTP or MongoDB code
+│   │   ├── ingest/    #   fetch, parsers (PDF/MD/DOCX/TXT), chunker
+│   │   ├── embed/     #   embedding providers
+│   │   ├── rerank/    #   rerank providers
+│   │   ├── llm/       #   OpenAI-compatible chat client
+│   │   ├── ocr/       #   OCR for scanned PDFs
+│   │   ├── search/    #   hybrid search service
+│   │   ├── answer/    #   prompt, [Source N] parsing and verification
+│   │   └── eval/      #   evaluation metrics
 │   ├── api/           # Hono app, routes, auth, request logger
-│   ├── db/            # MongoClient, collections, indexes, ingest repository
+│   ├── db/            # MongoClient, indexes, ingest + search repositories ($rankFusion)
+│   ├── cli/           # CLI output formatting
+│   ├── services.js    # wires core + db + providers (used by API, CLI scripts, eval)
 │   ├── config.js      # env validation with zod
 │   └── server.js      # local dev entry
 ├── api/index.js       # Vercel entry
-├── scripts/           # check, setup-indexes, ingest-cli, smoke-test.sh
+├── scripts/           # veridoc CLI, eval, check, setup-indexes, ingest-cli, smoke-test.sh
+├── eval/              # example evaluation dataset
 ├── tests/             # vitest suites (in-memory repo, no network)
 └── docs/              # API reference, testing guide, diagrams
 ```
@@ -318,9 +421,29 @@ The free M0 tier allows up to 3 search indexes. If you change `EMBED_DIMENSIONS`
 | DOCX | null | Path from Word's built-in **Heading 1–6** styles (bold text styled to look like a heading isn't detected) |
 | TXT | null | null |
 
-Scanned PDFs without a text layer need OCR, which isn't supported yet.
+PDFs with almost no text layer (under ~40 characters per page) are treated as scanned and sent to OCR when it's enabled; otherwise they fail with a message saying so.
 
 </details>
+
+## 📏 Evaluation
+
+`pnpm eval` runs a labelled question set and reports how well retrieval and answers work, so you can tune `CHUNK_TOKENS`, `TOP_K`, the reranker or the model and see the effect.
+
+```bash
+pnpm ingest ./docs                     # the example set asks about VeriDoc's own docs
+pnpm eval                              # retrieval only: 1 embedding call per question
+pnpm eval --answers --json report.json # also ask the LLM and verify citations
+pnpm eval my-set.jsonl --api           # evaluate a running server instead (VERIDOC_URL)
+```
+
+Each line of the dataset is one question:
+
+```json
+{"question": "What status code is returned for an unsupported file type?", "files": ["API.md"], "answerContains": ["415"]}
+{"question": "What is the capital of France?", "files": []}
+```
+
+`files` lists the documents that contain the answer (`[]` means the right answer is "not in the documents"); `pages` and `answerContains` are optional. It reports **hit@1, hit@k, MRR and file recall** for retrieval, and with `--answers` the share of **verified / partial / unverified** answers, answers that **contain the expected text**, answers that **cite a relevant source**, and **correct refusals**. On free tiers, add `--limit` and `--delay <ms>` to stay under rate limits.
 
 ## 🗺️ Roadmap
 
@@ -328,11 +451,18 @@ Scanned PDFs without a text layer need OCR, which isn't supported yet.
 - [x] Data model, Atlas Vector + Search indexes
 - [x] Ingestion: PDF / Markdown / DOCX / TXT parsers, sentence-aware chunker, batched embedding
 - [x] Document API, request IDs, structured logs, `pnpm check` diagnostics
-- [ ] Hybrid search endpoint (`$rankFusion` + rerank)
-- [ ] Answer endpoint with `[Source N]` citations and citation verification
-- [ ] Evaluation scripts
-- [ ] Upload helper for Vercel Blob
-- [ ] OCR for scanned PDFs
+- [x] Hybrid search endpoint (`$rankFusion` + rerank)
+- [x] Answer endpoint with `[Source N]` citations and citation verification
+- [x] Evaluation scripts
+- [x] Upload helper for Vercel Blob (CLI + browser client uploads)
+- [x] OCR for scanned PDFs
+
+**Ideas for next** (contributions welcome):
+
+- [ ] Streaming answers (server-sent events)
+- [ ] Minimal web UI for upload and chat
+- [ ] Private Blob stores (authenticated downloads)
+- [ ] Model-based citation checking (entailment) on top of the lexical check
 
 ## 🤝 Contributing
 

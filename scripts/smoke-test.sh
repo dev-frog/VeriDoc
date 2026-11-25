@@ -3,10 +3,12 @@
 #
 #   BASE=http://localhost:3000 KEY=your-key ./scripts/smoke-test.sh
 #   BASE=https://my-app.vercel.app KEY=... DOC_URL=https://.../file.pdf DOC_NAME=file.pdf ./scripts/smoke-test.sh
+#   SKIP_ASK=1 ./scripts/smoke-test.sh     # skip /ask (saves one LLM call)
 #
-# Checks /health, auth, validation errors, then ingests one document end to end
-# and deletes it again. Needs only bash + curl. The server's SOURCE_URL_HOSTS
-# must allow DOC_URL's host (use SOURCE_URL_HOSTS=* locally).
+# Checks /health, auth, validation errors, ingests one document end to end,
+# searches it, asks a question about it, then deletes it again. Needs only
+# bash + curl. The server's SOURCE_URL_HOSTS must allow DOC_URL's host
+# (use SOURCE_URL_HOSTS=* locally).
 set -uo pipefail
 
 BASE="${BASE:-http://localhost:3000}"
@@ -14,6 +16,8 @@ KEY="${KEY:-${VERIDOC_API_KEY:-}}"
 DOC_URL="${DOC_URL:-https://raw.githubusercontent.com/honojs/hono/main/README.md}"
 DOC_NAME="${DOC_NAME:-hono-readme.md}"
 MAX_POLLS="${MAX_POLLS:-120}"
+QUESTION="${QUESTION:-What is Hono and which runtimes does it support?}"
+SKIP_ASK="${SKIP_ASK:-}"
 
 if [[ -t 1 ]]; then G=$'\e[32m'; R=$'\e[31m'; D=$'\e[2m'; N=$'\e[0m'; else G=; R=; D=; N=; fi
 pass=0; fail=0
@@ -57,6 +61,7 @@ expect 'unknown route → 404 not_found (JSON)' 404 '"code":"not_found"'
 if [[ -n $KEY ]]; then
   req GET /documents '' no;    expect 'no API key → 401' 401 '"code":"unauthorized"'
   req GET /documents '' wrong; expect 'wrong API key → 401' 401 '"code":"unauthorized"'
+  req POST /search '{"query":"x"}' no; expect 'POST /search without key → 401' 401 '"code":"unauthorized"'
 fi
 
 # --- validation ---
@@ -74,6 +79,10 @@ req GET /documents/000000000000000000000000
 expect 'unknown document id → 404' 404 '"code":"not_found"'
 req GET /documents/not-an-id
 expect 'malformed document id → 404' 404 '"code":"not_found"'
+req POST /search '{"query":""}'
+expect 'empty search query → 400' 400 '"code":"invalid_request"'
+req POST /ask '{"question":"x","documentIds":["nope"]}'
+expect 'bad documentIds on /ask → 400' 400 '"code":"invalid_request"'
 
 # --- full ingestion ---
 req POST /documents "{\"url\":\"$DOC_URL\",\"fileName\":\"$DOC_NAME\"}"
@@ -104,6 +113,17 @@ expect 'GET /documents/:id' 200 "\"id\":\"$ID\""
 
 req GET '/documents?limit=1'
 expect 'GET /documents?limit=1 (list + nextCursor)' 200 '"nextCursor"'
+
+if [[ $status == ready ]]; then
+  req POST /search "{\"query\":\"$QUESTION\",\"documentIds\":[\"$ID\"],\"topN\":3}"
+  expect 'POST /search finds the document' 200 "\"documentId\":\"$ID\""
+  if [[ -z $SKIP_ASK ]]; then
+    req POST /ask "{\"question\":\"$QUESTION\",\"documentIds\":[\"$ID\"]}"
+    if expect 'POST /ask answers with a verification status' 200 '"verification":\{"status":"(verified|partial|unverified|no_answer)"'; then
+      echo "    ${D}verification: $(sed -nE 's/.*"verification":\{"status":"([a-z_]+)".*/\1/p' <<<"$BODY")${N}"
+    fi
+  fi
+fi
 
 req DELETE "/documents/$ID"
 expect 'DELETE /documents/:id' 200 '"deleted":true'

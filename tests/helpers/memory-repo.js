@@ -63,5 +63,35 @@ export function createMemoryRepo() {
     async countEmbeddedChunks(docId) {
       return [...chunks.values()].filter((c) => c.docId === docId && c.embedding).length;
     },
+
+    /** Same contract as the Mongo SearchRepo: cosine + keyword ranks fused with RRF (k=60), ready docs only. */
+    async hybridSearch({ vector, text, limit, documentIds }) {
+      const pool = [...chunks.values()].filter(
+        (c) => docs.get(c.docId)?.status === 'ready' && (!documentIds?.length || documentIds.includes(c.docId)),
+      );
+      const cos = (a, b) => {
+        let d = 0, na = 0, nb = 0;
+        for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; na += a[i] ** 2; nb += b[i] ** 2; }
+        return na && nb ? d / Math.sqrt(na * nb) : 0;
+      };
+      const terms = text.toLowerCase().match(/\w+/g) ?? [];
+      const byVector = pool.filter((c) => c.embedding).map((c) => ({ c, s: cos(vector, c.embedding) }));
+      const byText = pool
+        .map((c) => ({ c, s: terms.filter((t) => `${c.heading ?? ''} ${c.text}`.toLowerCase().includes(t)).length }))
+        .filter((x) => x.s > 0);
+      const fused = new Map();
+      for (const list of [byVector, byText]) {
+        list.sort((a, b) => b.s - a.s).slice(0, limit).forEach(({ c }, i) => {
+          fused.set(c.id, { c, score: (fused.get(c.id)?.score ?? 0) + 1 / (60 + i + 1) });
+        });
+      }
+      return [...fused.values()]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map(({ c, score }) => ({
+          id: c.id, docId: c.docId, fileName: docs.get(c.docId).fileName, chunkIndex: c.chunkIndex,
+          text: c.text, page: c.page ?? null, heading: c.heading ?? null, score,
+        }));
+    },
   };
 }
